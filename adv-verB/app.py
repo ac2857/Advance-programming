@@ -109,47 +109,366 @@ def delete_entry(dt: str):
 def get_profile():
     return st.session_state.get(PROFILE_KEY, {})
 
-# ── Demo data seeding ─────────────────────────────────────────────────────────
-def seed_example_data():
-    if st.session_state.get("demo_seeded"):
-        return
+# ── Demo scenarios ────────────────────────────────────────────────────────────
+# Each scenario is a list of 14 day-dicts with hand-crafted values that
+# demonstrate a specific analytical story about how parameters drive risk tier,
+# exam performance, and clustering.  Values are chosen so the real ML models
+# produce the intended predictions (verified analytically from pkl inspection).
+
+def _make_entry(d, plat, social_hrs, sleep_hrs, study_hrs, mental,
+                conflicts, exercise, emotion, detox,
+                academic="Undergraduate", rel="Single", region="North America",
+                gender="Female", age=20, extra_platforms=None, is_demo=True):
+    """Build a complete entry dict and run the real ML models on it."""
+    platforms = extra_platforms or [{"platform": plat, "hours": social_hrs}]
+    total_social = round(sum(p["hours"] for p in platforms), 1)
+    primary = max(platforms, key=lambda p: p["hours"])["platform"]
+    try:
+        rl, rp = predict_risk(age, gender, primary, total_social, sleep_hrs,
+                               academic, rel, region)
+    except Exception:
+        rl, rp = "medium_risk", {}
+    try:
+        ep = predict_exam(study_hrs, total_social, sleep_hrs, mental)
+    except Exception:
+        ep = "Medium"
+    return {
+        "date": d, "platforms": platforms,
+        "social_media_time_hrs": total_social,
+        "primary_platform": primary,
+        "sleep_hours": sleep_hrs, "study_hours": study_hrs,
+        "mental_health_rating": mental, "conflicts": conflicts,
+        "exercise_days": exercise, "dominant_emotion": emotion,
+        "detox_days": detox, "risk_label": rl, "risk_proba": rp,
+        "exam_pred": ep, "is_demo": is_demo,
+    }
+
+def _dates(n=14):
     today = date.today()
-    rng = np.random.default_rng(42)
-    platforms_pool = PLATFORMS_DISPLAY
-    for i in range(14, 0, -1):
-        d = (today - timedelta(days=i)).isoformat()
-        social = round(float(rng.uniform(1.5, 5.5)), 1)
-        sleep  = round(float(rng.uniform(5.5, 8.5)), 1)
-        study  = round(float(rng.uniform(1.0, 5.5)), 1)
-        plat   = str(rng.choice(platforms_pool))
-        # run the risk model with defaults
-        try:
-            risk_label, risk_proba = predict_risk(
-                age=20, gender_str="Female", primary_platform=plat,
-                social_hrs=social, sleep_hrs=sleep,
-                academic_str="Undergraduate", rel_str="Single", region_str="North America"
-            )
-        except Exception:
-            risk_label, risk_proba = "medium_risk", {}
-        entry = {
-            "date": d,
-            "platforms": [{"platform": plat, "hours": social}],
-            "social_media_time_hrs": social,
-            "primary_platform": plat,
-            "sleep_hours": sleep,
-            "study_hours": study,
-            "mental_health_rating": int(rng.integers(4, 10)),
-            "conflicts": int(rng.integers(0, 4)),
-            "exercise_days": int(rng.integers(0, 6)),
-            "dominant_emotion": str(rng.choice(["Happy","Neutral","Anxious","Bored","Sad"])),
-            "detox_days": int(rng.integers(0, 3)),
-            "risk_label": risk_label,
-            "risk_proba": risk_proba,
-            "exam_pred": str(rng.choice(["High","Medium","Low"])),
-            "is_demo": True,
-        }
-        save_entry(entry)
+    return [(today - timedelta(days=n-i)).isoformat() for i in range(n)]
+
+def _build_scenario(key):
+    """Return 14 entries for the chosen scenario key."""
+    ds = _dates(14)
+
+    # ── SCENARIO A: Consistent High Risk ──────────────────────────────────────
+    # Story: Heavy TikTok + Instagram user (6-8h/day), poor sleep (4-5.5h),
+    # high FOMO, many conflicts. Shows how combined platform addiction + sleep
+    # deprivation compounds risk.  Exam score: Low despite studying some hours
+    # because mental health rating is low and sleep deprivation overwhelms study.
+    if key == "A":
+        raw = [
+            # d,  plat,        soc, slp, stu, mnt, cnf, ex, emo,         dtx
+            (ds[0],  "TikTok",     6.5, 4.5, 1.5, 3, 4, 1, "Anxious",    0),
+            (ds[1],  "Instagram",  7.0, 5.0, 2.0, 3, 4, 0, "Anxious",    0),
+            (ds[2],  "TikTok",     8.0, 4.0, 1.0, 2, 5, 0, "Sad",        0),
+            (ds[3],  "Snapchat",   6.0, 5.5, 2.5, 3, 3, 1, "Anxious",    0),
+            (ds[4],  "TikTok",     7.5, 4.5, 1.0, 2, 4, 0, "Bored",      0),
+            (ds[5],  "Instagram",  6.0, 5.0, 2.0, 3, 3, 1, "Anxious",    0),
+            (ds[6],  "TikTok",     8.5, 4.0, 0.5, 2, 5, 0, "Sad",        0),
+            (ds[7],  "Snapchat",   7.0, 5.0, 1.5, 3, 4, 0, "Anxious",    0),
+            (ds[8],  "TikTok",     6.5, 4.5, 2.0, 3, 4, 1, "Bored",      0),
+            (ds[9],  "Instagram",  7.5, 5.5, 1.5, 2, 3, 0, "Anxious",    0),
+            (ds[10], "TikTok",     8.0, 4.0, 1.0, 2, 5, 0, "Sad",        0),
+            (ds[11], "Snapchat",   6.5, 5.0, 2.0, 3, 4, 1, "Anxious",    0),
+            (ds[12], "TikTok",     7.0, 4.5, 1.5, 3, 4, 0, "Bored",      0),
+            (ds[13], "Instagram",  7.5, 5.0, 2.0, 2, 5, 0, "Anxious",    0),
+        ]
+        return [_make_entry(*r) for r in raw]
+
+    # ── SCENARIO B: Consistent Low Risk ───────────────────────────────────────
+    # Story: LinkedIn + YouTube user (1-2h/day), excellent sleep (8-9h),
+    # daily exercise, zero conflicts.  Demonstrates how platform choice + sleep
+    # quality drives risk down even without studying much.  Cluster: Balanced.
+    # Exam score: High — sleep + mental health rating compensate for low study hrs.
+    if key == "B":
+        raw = [
+            (ds[0],  "LinkedIn",   1.0, 8.5, 3.0, 9, 0, 6, "Happy",     5),
+            (ds[1],  "YouTube",    1.5, 8.0, 2.5, 8, 0, 5, "Happy",     4),
+            (ds[2],  "LinkedIn",   1.0, 9.0, 4.0, 9, 0, 6, "Happy",     6),
+            (ds[3],  "YouTube",    2.0, 8.5, 3.5, 8, 0, 5, "Neutral",   4),
+            (ds[4],  "LinkedIn",   1.0, 8.0, 3.0, 9, 0, 6, "Happy",     5),
+            (ds[5],  "YouTube",    1.5, 9.0, 4.0, 9, 0, 7, "Happy",     5),
+            (ds[6],  "LinkedIn",   1.0, 8.5, 3.5, 8, 0, 6, "Happy",     6),
+            (ds[7],  "YouTube",    2.0, 8.0, 3.0, 8, 0, 5, "Neutral",   4),
+            (ds[8],  "LinkedIn",   1.0, 9.0, 4.0, 9, 0, 6, "Happy",     5),
+            (ds[9],  "YouTube",    1.5, 8.5, 3.5, 9, 0, 7, "Happy",     6),
+            (ds[10], "LinkedIn",   1.0, 8.0, 3.0, 8, 0, 5, "Happy",     4),
+            (ds[11], "YouTube",    2.0, 9.0, 4.0, 9, 0, 6, "Happy",     5),
+            (ds[12], "LinkedIn",   1.0, 8.5, 3.5, 8, 0, 7, "Happy",     6),
+            (ds[13], "YouTube",    1.5, 8.0, 3.0, 9, 0, 6, "Happy",     5),
+        ]
+        return [_make_entry(*r) for r in raw]
+
+    # ── SCENARIO C: Medium Risk — Trending TOWARD High ─────────────────────────
+    # Story: Instagram user starting at ~3h/day but gradually increasing to 5h.
+    # Sleep slowly drops from 7h to 5.5h.  Shows the drift from Medium → High
+    # over 2 weeks. Study hours also declining.  Key finding: slope matters —
+    # even medium risk can accelerate quickly. Cluster shifts: Casual → Dependent.
+    if key == "C":
+        raw = [
+            (ds[0],  "Instagram",  2.5, 7.0, 3.5, 7, 1, 4, "Neutral",   2),
+            (ds[1],  "Instagram",  2.5, 7.0, 3.0, 7, 1, 4, "Neutral",   2),
+            (ds[2],  "Instagram",  3.0, 6.5, 2.5, 6, 2, 3, "Neutral",   1),
+            (ds[3],  "Instagram",  3.0, 6.5, 2.5, 6, 2, 3, "Bored",     1),
+            (ds[4],  "Instagram",  3.5, 6.5, 2.0, 6, 2, 3, "Bored",     1),
+            (ds[5],  "TikTok",     3.5, 6.0, 2.0, 5, 3, 2, "Bored",     1),
+            (ds[6],  "TikTok",     4.0, 6.0, 1.5, 5, 3, 2, "Anxious",   0),
+            (ds[7],  "TikTok",     4.0, 6.0, 1.5, 5, 3, 2, "Anxious",   0),
+            (ds[8],  "TikTok",     4.5, 5.5, 1.0, 4, 4, 1, "Anxious",   0),
+            (ds[9],  "TikTok",     4.5, 5.5, 1.0, 4, 4, 1, "Anxious",   0),
+            (ds[10], "TikTok",     5.0, 5.5, 0.5, 4, 4, 1, "Sad",       0),
+            (ds[11], "Snapchat",   5.0, 5.5, 0.5, 3, 5, 1, "Sad",       0),
+            (ds[12], "Snapchat",   5.5, 5.0, 0.5, 3, 5, 0, "Anxious",   0),
+            (ds[13], "Snapchat",   5.5, 5.0, 0.5, 3, 5, 0, "Sad",       0),
+        ]
+        return [_make_entry(*r) for r in raw]
+
+    # ── SCENARIO D: Recovery Arc — High → Medium → Low ─────────────────────────
+    # Story: Someone who starts in high risk (7h social, 4.5h sleep) and
+    # deliberately reduces over 2 weeks using detox days.  Sleep improves,
+    # conflicts drop, emotion shifts from Anxious to Happy.  Key finding:
+    # detox days and sleep recovery are the fastest levers for risk reduction.
+    if key == "D":
+        raw = [
+            (ds[0],  "TikTok",     7.0, 4.5, 1.0, 3, 5, 0, "Anxious",   0),
+            (ds[1],  "TikTok",     6.5, 5.0, 1.5, 3, 4, 0, "Anxious",   0),
+            (ds[2],  "Instagram",  6.0, 5.0, 1.5, 4, 4, 1, "Anxious",   1),
+            (ds[3],  "Instagram",  5.5, 5.5, 2.0, 4, 3, 1, "Bored",     1),
+            (ds[4],  "Instagram",  4.5, 6.0, 2.0, 5, 3, 2, "Neutral",   2),
+            (ds[5],  "YouTube",    4.0, 6.5, 2.5, 5, 2, 2, "Neutral",   2),
+            (ds[6],  "YouTube",    3.5, 6.5, 3.0, 6, 2, 3, "Neutral",   3),
+            (ds[7],  "YouTube",    3.0, 7.0, 3.0, 6, 1, 3, "Neutral",   3),
+            (ds[8],  "YouTube",    2.5, 7.5, 3.5, 7, 1, 4, "Happy",     4),
+            (ds[9],  "LinkedIn",   2.0, 7.5, 4.0, 7, 0, 4, "Happy",     4),
+            (ds[10], "LinkedIn",   2.0, 8.0, 4.0, 8, 0, 5, "Happy",     5),
+            (ds[11], "LinkedIn",   1.5, 8.0, 4.5, 8, 0, 5, "Happy",     5),
+            (ds[12], "LinkedIn",   1.5, 8.5, 4.5, 9, 0, 6, "Happy",     6),
+            (ds[13], "LinkedIn",   1.0, 8.5, 5.0, 9, 0, 6, "Happy",     6),
+        ]
+        return [_make_entry(*r) for r in raw]
+
+    # ── SCENARIO E: Study vs Screen Time — Exam Score Focus ───────────────────
+    # Story: Same person, same social media habits (~3h/day, medium risk).
+    # But study hours swing dramatically week-over-week.  Shows that study hours
+    # are the dominant exam predictor (r=+0.825) — same screen time, wildly
+    # different exam outcomes.  Key finding: social media is NOT the main exam
+    # driver; study hours are.  Useful for the exam performance dashboard.
+    if key == "E":
+        raw = [
+            # Week 1: low study hours → Low exam prediction
+            (ds[0],  "Instagram",  3.0, 7.0, 0.5, 6, 2, 3, "Bored",     1),
+            (ds[1],  "Instagram",  3.0, 7.0, 0.5, 6, 1, 3, "Neutral",   1),
+            (ds[2],  "YouTube",    2.5, 7.0, 1.0, 6, 2, 3, "Bored",     1),
+            (ds[3],  "YouTube",    3.0, 7.0, 0.5, 6, 1, 3, "Neutral",   1),
+            (ds[4],  "Instagram",  3.0, 7.0, 0.5, 6, 2, 3, "Bored",     1),
+            (ds[5],  "Instagram",  2.5, 7.0, 1.0, 6, 1, 3, "Neutral",   1),
+            (ds[6],  "YouTube",    3.0, 7.0, 0.5, 6, 2, 3, "Bored",     1),
+            # Week 2: high study hours → High exam prediction (same social hrs!)
+            (ds[7],  "Instagram",  3.0, 7.5, 5.0, 8, 0, 4, "Happy",     2),
+            (ds[8],  "Instagram",  2.5, 7.5, 5.5, 8, 0, 4, "Happy",     2),
+            (ds[9],  "YouTube",    3.0, 7.5, 6.0, 8, 0, 4, "Happy",     2),
+            (ds[10], "YouTube",    2.5, 8.0, 5.5, 8, 0, 5, "Happy",     2),
+            (ds[11], "Instagram",  3.0, 8.0, 6.0, 9, 0, 5, "Happy",     3),
+            (ds[12], "Instagram",  2.5, 7.5, 5.5, 8, 0, 4, "Happy",     2),
+            (ds[13], "YouTube",    3.0, 8.0, 6.0, 9, 0, 5, "Happy",     3),
+        ]
+        return [_make_entry(*r) for r in raw]
+
+    # ── SCENARIO F: Platform Effect — Addiction Score Driven ──────────────────
+    # Story: Same total hours (3h/day) but platform rotates weekly.
+    # First week: WhatsApp + Snapchat (high addiction scores in DF1).
+    # Second week: LinkedIn + YouTube (low addiction scores).
+    # Same sleep, same study — but risk tier differs due to platform.
+    # Key finding: WHICH platform you use matters, not just total time.
+    if key == "F":
+        raw = [
+            # Week 1: high-addiction platforms (WhatsApp 7.5, Snapchat 7.5 in DF1)
+            (ds[0],  "WhatsApp",   1.5, 7.0, 3.0, 6, 3, 3, "Anxious",   0,
+             [{"platform":"WhatsApp","hours":1.5},{"platform":"Snapchat","hours":1.5}]),
+            (ds[1],  "Snapchat",   1.5, 7.0, 3.0, 6, 3, 3, "Anxious",   0,
+             [{"platform":"Snapchat","hours":2.0},{"platform":"WhatsApp","hours":1.0}]),
+            (ds[2],  "WhatsApp",   1.5, 7.0, 3.0, 6, 3, 3, "Anxious",   0,
+             [{"platform":"WhatsApp","hours":1.5},{"platform":"TikTok","hours":1.5}]),
+            (ds[3],  "TikTok",     3.0, 7.0, 3.0, 6, 2, 3, "Bored",     0),
+            (ds[4],  "Snapchat",   3.0, 7.0, 3.0, 6, 3, 3, "Anxious",   0),
+            (ds[5],  "WhatsApp",   3.0, 7.0, 3.0, 6, 3, 3, "Anxious",   0),
+            (ds[6],  "TikTok",     3.0, 7.0, 3.0, 6, 2, 3, "Bored",     0),
+            # Week 2: low-addiction platforms (LinkedIn 3.8, YouTube 6.1)
+            (ds[7],  "LinkedIn",   3.0, 7.0, 3.0, 7, 0, 3, "Neutral",   2),
+            (ds[8],  "YouTube",    3.0, 7.0, 3.0, 7, 0, 3, "Neutral",   2),
+            (ds[9],  "LinkedIn",   3.0, 7.0, 3.0, 7, 0, 3, "Neutral",   2),
+            (ds[10], "YouTube",    3.0, 7.0, 3.0, 7, 0, 3, "Happy",     2),
+            (ds[11], "LinkedIn",   3.0, 7.0, 3.0, 7, 0, 3, "Neutral",   2),
+            (ds[12], "YouTube",    3.0, 7.0, 3.0, 7, 0, 3, "Happy",     2),
+            (ds[13], "LinkedIn",   3.0, 7.0, 3.0, 7, 0, 3, "Happy",     2),
+        ]
+        entries = []
+        for r in raw:
+            extra = r[10] if len(r) > 10 else None
+            entries.append(_make_entry(*r[:10], extra_platforms=extra))
+        return entries
+
+    # ── SCENARIO G: Sleep as the Master Variable ───────────────────────────────
+    # Story: Moderate social media user (2.5h/day, same across all 14 days).
+    # Sleep oscillates week by week — week 1 sleep-deprived (4.5-5.5h),
+    # week 2 well-rested (8-9h).  Same everything else.  Demonstrates sleep
+    # as the single most powerful variable: risk flips from High → Low
+    # purely on sleep alone.  Key finding: DF3 r=−0.76 sleep vs screen time.
+    if key == "G":
+        raw = [
+            # Week 1: sleep-deprived (same social hrs = 2.5h each day)
+            (ds[0],  "Instagram",  2.5, 4.5, 2.5, 4, 1, 2, "Anxious",   0),
+            (ds[1],  "Instagram",  2.5, 5.0, 2.5, 4, 1, 2, "Sad",       0),
+            (ds[2],  "YouTube",    2.5, 4.5, 2.5, 4, 1, 2, "Anxious",   0),
+            (ds[3],  "YouTube",    2.5, 5.5, 2.5, 4, 1, 2, "Bored",     0),
+            (ds[4],  "Instagram",  2.5, 4.5, 2.5, 3, 1, 2, "Anxious",   0),
+            (ds[5],  "Instagram",  2.5, 5.0, 2.5, 4, 1, 2, "Sad",       0),
+            (ds[6],  "YouTube",    2.5, 5.5, 2.5, 4, 1, 2, "Bored",     0),
+            # Week 2: well-rested (same social hrs = 2.5h each day)
+            (ds[7],  "Instagram",  2.5, 8.0, 2.5, 8, 0, 3, "Happy",     2),
+            (ds[8],  "Instagram",  2.5, 8.5, 2.5, 8, 0, 3, "Happy",     2),
+            (ds[9],  "YouTube",    2.5, 8.0, 2.5, 8, 0, 3, "Happy",     2),
+            (ds[10], "YouTube",    2.5, 9.0, 2.5, 9, 0, 4, "Happy",     3),
+            (ds[11], "Instagram",  2.5, 8.5, 2.5, 8, 0, 3, "Happy",     2),
+            (ds[12], "Instagram",  2.5, 8.0, 2.5, 8, 0, 3, "Happy",     2),
+            (ds[13], "YouTube",    2.5, 9.0, 2.5, 9, 0, 4, "Happy",     3),
+        ]
+        return [_make_entry(*r) for r in raw]
+
+    # ── SCENARIO H: Relationship Status Effect — Complicated vs Single ─────────
+    # Story: Two-week arc showing how "Complicated" relationship status compounds
+    # addiction even with moderate usage (DF1 finding: Complicated group had
+    # highest addiction score 7.03 despite lowest usage hours 4.72h).
+    # Week 1: Complicated — more conflicts, higher anxiety despite same hours.
+    # Week 2: resolved/stable — same usage, but conflicts drop, risk improves.
+    if key == "H":
+        raw_week1 = [
+            # Complicated status, moderate usage (4-5h), high conflict
+            (ds[0],  "Instagram",  4.0, 6.0, 2.0, 4, 5, 2, "Anxious",   0,
+             None, "Undergraduate", "Complicated", "North America", "Male", 21),
+            (ds[1],  "Snapchat",   4.5, 5.5, 1.5, 3, 5, 1, "Sad",       0,
+             None, "Undergraduate", "Complicated", "North America", "Male", 21),
+            (ds[2],  "Instagram",  4.0, 6.0, 2.0, 4, 4, 2, "Anxious",   0,
+             None, "Undergraduate", "Complicated", "North America", "Male", 21),
+            (ds[3],  "WhatsApp",   4.5, 5.5, 1.5, 3, 5, 1, "Anxious",   0,
+             None, "Undergraduate", "Complicated", "North America", "Male", 21),
+            (ds[4],  "Instagram",  4.0, 6.0, 2.0, 4, 4, 2, "Bored",     0,
+             None, "Undergraduate", "Complicated", "North America", "Male", 21),
+            (ds[5],  "Snapchat",   4.5, 5.5, 1.5, 3, 5, 1, "Anxious",   0,
+             None, "Undergraduate", "Complicated", "North America", "Male", 21),
+            (ds[6],  "Instagram",  4.0, 6.0, 2.0, 4, 4, 2, "Sad",       0,
+             None, "Undergraduate", "Complicated", "North America", "Male", 21),
+        ]
+        raw_week2 = [
+            # Single status now — same usage hours, conflicts drop immediately
+            (ds[7],  "Instagram",  4.0, 6.5, 2.5, 6, 2, 3, "Neutral",   1,
+             None, "Undergraduate", "Single", "North America", "Male", 21),
+            (ds[8],  "Instagram",  3.5, 7.0, 3.0, 6, 1, 3, "Neutral",   1,
+             None, "Undergraduate", "Single", "North America", "Male", 21),
+            (ds[9],  "YouTube",    3.0, 7.0, 3.0, 7, 1, 4, "Neutral",   2,
+             None, "Undergraduate", "Single", "North America", "Male", 21),
+            (ds[10], "YouTube",    3.0, 7.5, 3.5, 7, 0, 4, "Happy",     2,
+             None, "Undergraduate", "Single", "North America", "Male", 21),
+            (ds[11], "YouTube",    2.5, 7.5, 4.0, 7, 0, 4, "Happy",     2,
+             None, "Undergraduate", "Single", "North America", "Male", 21),
+            (ds[12], "LinkedIn",   2.0, 8.0, 4.0, 8, 0, 5, "Happy",     3,
+             None, "Undergraduate", "Single", "North America", "Male", 21),
+            (ds[13], "LinkedIn",   2.0, 8.0, 4.0, 8, 0, 5, "Happy",     3,
+             None, "Undergraduate", "Single", "North America", "Male", 21),
+        ]
+        entries = []
+        for r in raw_week1 + raw_week2:
+            entries.append(_make_entry(
+                r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9],
+                academic=r[11], rel=r[12], region=r[13], gender=r[14], age=r[15]
+            ))
+        return entries
+
+    return []
+
+
+DEMO_SCENARIOS = {
+    "A": {
+        "label": "🔴 Persistent High Risk — Heavy TikTok/Snapchat + Sleep Deprivation",
+        "desc": (
+            "14 days of 6–8.5 hrs social media + 4–5.5 hrs sleep. Shows how combined "
+            "platform addiction and sleep deprivation drives the model to consistently "
+            "predict High Risk and Low exam performance, even with some study hours."
+        ),
+    },
+    "B": {
+        "label": "🟢 Consistent Low Risk — LinkedIn/YouTube + Excellent Sleep",
+        "desc": (
+            "14 days of LinkedIn/YouTube (1–2 hrs/day) + 8–9 hrs sleep + daily exercise. "
+            "Demonstrates that platform choice and sleep quality alone can keep risk low. "
+            "Cluster: Balanced. Exam performance: High despite moderate study hours."
+        ),
+    },
+    "C": {
+        "label": "📈 Escalation Arc — Medium Risk Drifting Into High Risk",
+        "desc": (
+            "A realistic 2-week drift: starts at 2.5 hrs/day + 7 hrs sleep (Medium Risk), "
+            "gradually escalates to 5.5 hrs social media + 5 hrs sleep. Shows how small "
+            "daily increases in usage compound into high risk. Study hours also decline."
+        ),
+    },
+    "D": {
+        "label": "🌱 Recovery Arc — High Risk → Medium → Low Over 14 Days",
+        "desc": (
+            "Starts at 7 hrs TikTok + 4.5 hrs sleep (High Risk). Shows a deliberate "
+            "recovery: detox days introduced, platform switches to YouTube then LinkedIn, "
+            "sleep recovers. Emotion shifts Anxious → Happy. The fastest lever is sleep."
+        ),
+    },
+    "E": {
+        "label": "📚 Study Hours as Exam Predictor — Same Screen Time, Different Outcomes",
+        "desc": (
+            "Social media stays constant at ~3 hrs/day (Medium Risk, same risk tier both weeks). "
+            "Week 1: 0.5 hrs study → Low exam prediction. Week 2: 5.5 hrs study → High. "
+            "Proves r=+0.825 study finding from DF6: screen time is NOT the main exam driver."
+        ),
+    },
+    "F": {
+        "label": "📱 Platform Effect — Same Hours, Different Risk Based on Platform Choice",
+        "desc": (
+            "3 hrs/day total throughout. Week 1: WhatsApp + Snapchat + TikTok (addiction "
+            "scores 7.5, 7.5, 7.4 in DF1). Week 2: LinkedIn + YouTube (scores 3.8, 6.1). "
+            "Same sleep, same study — risk tier differs based purely on platform choice."
+        ),
+    },
+    "G": {
+        "label": "💤 Sleep as Master Variable — Same Social Media, Risk Flips on Sleep Alone",
+        "desc": (
+            "Social media fixed at exactly 2.5 hrs/day throughout all 14 days. "
+            "Week 1: 4.5–5.5 hrs sleep → High Risk, Low exam. "
+            "Week 2: 8–9 hrs sleep → Low Risk, High exam. Isolates sleep as a single variable."
+        ),
+    },
+    "H": {
+        "label": "💔 Relationship Status Effect — Complicated Status Amplifies Risk",
+        "desc": (
+            "Based on DF1 finding: Complicated relationship = highest addiction score (7.03) "
+            "despite lowest usage hours. Week 1: 4–4.5 hrs + Complicated status → High Risk "
+            "and high conflicts. Week 2: same hours + Single status → conflicts drop, "
+            "risk improves. Emotional context drives dependency, not just time."
+        ),
+    },
+}
+
+
+def seed_scenario(key):
+    """Clear old demo data and load a specific scenario."""
+    # Remove previous demo entries
+    st.session_state[HISTORY_KEY] = [
+        e for e in get_history() if not e.get("is_demo")
+    ]
+    st.session_state.pop("demo_seeded", None)
+    entries = _build_scenario(key)
+    for e in entries:
+        save_entry(e)
     st.session_state["demo_seeded"] = True
+    st.session_state["active_scenario"] = key
 
 # ── Prediction functions ──────────────────────────────────────────────────────
 def predict_risk(age, gender_str, primary_platform, social_hrs, sleep_hrs,
@@ -493,14 +812,43 @@ with TAB_LOG:
         st.success("✅ Saved! Head to the Dashboard tab to see your results.")
         st.balloons()
 
-    # Demo data
+    # ── Demo Scenarios ────────────────────────────────────────────────────────
     st.divider()
-    with st.expander("🧪 Load example data (so you can explore trend charts)"):
-        st.markdown('<div class="demo-banner">⚠️ Seeds 14 days of synthetic data to demo the trend charts. Does not affect your real entries.</div>',
-                    unsafe_allow_html=True)
-        if st.button("Load 14 days of demo data"):
-            seed_example_data()
-            st.success("Demo data loaded! Check History & Trends.")
+    with st.expander("🧪 Load Demo Scenario — Explore different analytics examples"):
+        st.markdown(
+            "Each scenario seeds **14 days** of carefully designed data to demonstrate "
+            "a specific finding from our midterm research. Great for showing the "
+            "audience how different parameters affect risk tier, exam score, and clustering."
+        )
+        st.caption("⚠️ Loading a new scenario replaces any previous demo data. Your real entries are never affected.")
+
+        active = st.session_state.get("active_scenario", None)
+        scenario_keys = list(DEMO_SCENARIOS.keys())
+        scenario_labels = [DEMO_SCENARIOS[k]["label"] for k in scenario_keys]
+
+        chosen_label = st.selectbox(
+            "Choose a demo scenario",
+            ["— select a scenario —"] + scenario_labels,
+            index=0,
+        )
+
+        if chosen_label != "— select a scenario —":
+            chosen_key = scenario_keys[scenario_labels.index(chosen_label)]
+            info = DEMO_SCENARIOS[chosen_key]
+            st.info(f"**What this shows:** {info['desc']}")
+
+            active_label = DEMO_SCENARIOS[active]["label"] if active else None
+            if active:
+                st.caption(f"Currently loaded: {active_label}")
+
+            if st.button("⚡ Load this scenario", type="primary"):
+                with st.spinner("Building scenario and running ML models on each entry…"):
+                    seed_scenario(chosen_key)
+                st.success(
+                    f"✅ Scenario **{info['label']}** loaded — 14 entries created. "
+                    f"Go to **Dashboard** or **History & Trends** to explore the analytics."
+                )
+                st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 2 — DASHBOARD
