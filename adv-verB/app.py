@@ -12,16 +12,10 @@ Feedback addressed:
   ✓ Trend graphs tab (prof feedback) — unlocks after 3 entries
   ✓ Age and gender inputs in profile
   ✓ Demo data seeding so charts are visible from first visit
-
-Fixes:
-  ✓ __file__-based pkl paths (fixes FileNotFoundError on Streamlit Cloud)
-  ✓ predict_exam uses decision_function + ravel + plain Python list index
-    (fixes AttributeError / xp.take bug on Python 3.14 + sklearn >= 1.5)
 """
 
 import streamlit as st
 import pickle
-import os as _os
 from datetime import date, timedelta
 import numpy as np
 import pandas as pd
@@ -35,6 +29,7 @@ st.set_page_config(
 )
 
 # ── Load models ───────────────────────────────────────────────────────────────
+import os as _os
 _DIR = _os.path.dirname(_os.path.abspath(__file__))
 
 @st.cache_resource
@@ -49,19 +44,26 @@ risk_bundle, exam_bundle = load_models()
 
 risk_model   = risk_bundle["risk_classifier"]
 risk_scaler  = risk_bundle["feature_scaler"]
-le_risk      = risk_bundle["risk_label_encoder"]
-le_gender    = risk_bundle["gender_encoder"]
-le_platform  = risk_bundle["platform_encoder"]
+le_risk      = risk_bundle["risk_label_encoder"]   # high_risk / low_risk / medium_risk
+le_gender    = risk_bundle["gender_encoder"]        # female / male
+le_platform  = risk_bundle["platform_encoder"]      # facebook…youtube
 FEATURE_COLS = risk_bundle["feature_cols"]
+# ['age','gender_enc','platform_enc','social_media_time_hrs','sleep_hours',
+#  'sm_to_waking_ratio','academic_enc','rel_enc','region_enc']
 
-exam_model  = exam_bundle["model"]
+exam_model  = exam_bundle["model"]    # RidgeClassifier → High / Medium / Low
 exam_scaler = exam_bundle["scaler"]
+# Derive classes via _label_binarizer (stored in __dict__, not a property).
+# Accessing exam_model.classes_ directly fails on Python 3.14 + sklearn>=1.5
+# because classes_ became a @property that triggers broken array-API code.
+try:
+    _lb = exam_model.__dict__["_label_binarizer"]
+    EXAM_CLASSES = [str(c) for c in _lb.classes_]
+except Exception:
+    EXAM_CLASSES = ["High", "Low", "Medium"]  # alphabetical fallback
+# features: study_hours_per_day, social_media_hours, sleep_hours, mental_health_rating
 
-# Convert classes_ to a plain Python list of strings immediately at load time.
-# This avoids numpy string-array indexing bugs on Python 3.14 + sklearn >= 1.5.
-EXAM_CLASSES = [str(c) for c in exam_model.classes_]
-
-# ── Encoder look-up tables ────────────────────────────────────────────────────
+# ── Encoder look-up tables (verified against pkl inspection) ──────────────────
 GENDER_MAP   = {"Female": "female", "Male": "male"}
 PLATFORM_MAP = {
     "Facebook":"facebook","Instagram":"instagram","KakaoTalk":"kakaotalk",
@@ -85,7 +87,7 @@ COUNTRY_REGION = {
     "South Africa":"Africa","Egypt":"Africa","Other":"Other",
 }
 PLATFORMS_DISPLAY = list(PLATFORM_MAP.keys())
-WAKING_HOURS   = 16.0
+WAKING_HOURS = 16.0
 RISK_SCORE_MAP = {"low_risk":20, "medium_risk":55, "high_risk":85}
 
 # ── Session state helpers ─────────────────────────────────────────────────────
@@ -106,6 +108,48 @@ def delete_entry(dt: str):
 
 def get_profile():
     return st.session_state.get(PROFILE_KEY, {})
+
+# ── Demo data seeding ─────────────────────────────────────────────────────────
+def seed_example_data():
+    if st.session_state.get("demo_seeded"):
+        return
+    today = date.today()
+    rng = np.random.default_rng(42)
+    platforms_pool = PLATFORMS_DISPLAY
+    for i in range(14, 0, -1):
+        d = (today - timedelta(days=i)).isoformat()
+        social = round(float(rng.uniform(1.5, 5.5)), 1)
+        sleep  = round(float(rng.uniform(5.5, 8.5)), 1)
+        study  = round(float(rng.uniform(1.0, 5.5)), 1)
+        plat   = str(rng.choice(platforms_pool))
+        # run the risk model with defaults
+        try:
+            risk_label, risk_proba = predict_risk(
+                age=20, gender_str="Female", primary_platform=plat,
+                social_hrs=social, sleep_hrs=sleep,
+                academic_str="Undergraduate", rel_str="Single", region_str="North America"
+            )
+        except Exception:
+            risk_label, risk_proba = "medium_risk", {}
+        entry = {
+            "date": d,
+            "platforms": [{"platform": plat, "hours": social}],
+            "social_media_time_hrs": social,
+            "primary_platform": plat,
+            "sleep_hours": sleep,
+            "study_hours": study,
+            "mental_health_rating": int(rng.integers(4, 10)),
+            "conflicts": int(rng.integers(0, 4)),
+            "exercise_days": int(rng.integers(0, 6)),
+            "dominant_emotion": str(rng.choice(["Happy","Neutral","Anxious","Bored","Sad"])),
+            "detox_days": int(rng.integers(0, 3)),
+            "risk_label": risk_label,
+            "risk_proba": risk_proba,
+            "exam_pred": str(rng.choice(["High","Medium","Low"])),
+            "is_demo": True,
+        }
+        save_entry(entry)
+    st.session_state["demo_seeded"] = True
 
 # ── Prediction functions ──────────────────────────────────────────────────────
 def predict_risk(age, gender_str, primary_platform, social_hrs, sleep_hrs,
@@ -137,8 +181,7 @@ def predict_risk(age, gender_str, primary_platform, social_hrs, sleep_hrs,
 def predict_exam(study_hrs, social_hrs, sleep_hrs, mental_rating):
     """
     Bulletproof version: decision_function + ravel + plain Python list index.
-    Avoids the xp.take bug AND numpy string-array indexing issues
-    on Python 3.14 + sklearn >= 1.5. Produces identical results to .predict().
+    Avoids xp.take bug AND numpy string-array indexing on Python 3.14 / sklearn>=1.5.
     """
     X = pd.DataFrame(
         [[float(study_hrs), float(social_hrs), float(sleep_hrs), float(mental_rating)]],
@@ -147,54 +190,9 @@ def predict_exam(study_hrs, social_hrs, sleep_hrs, mental_rating):
     )
     X_scaled  = exam_scaler.transform(X)
     scores    = exam_model.decision_function(X_scaled)
-    scores_1d = np.asarray(scores, dtype=float).ravel()   # always 1-D
+    scores_1d = np.asarray(scores, dtype=float).ravel()
     idx       = int(np.argmax(scores_1d))
-    return EXAM_CLASSES[idx]   # plain Python list — no numpy string indexing
-
-# ── Demo data seeding ─────────────────────────────────────────────────────────
-def seed_example_data():
-    if st.session_state.get("demo_seeded"):
-        return
-    today = date.today()
-    rng = np.random.default_rng(42)
-    for i in range(14, 0, -1):
-        d      = (today - timedelta(days=i)).isoformat()
-        social = round(float(rng.uniform(1.5, 5.5)), 1)
-        sleep  = round(float(rng.uniform(5.5, 8.5)), 1)
-        study  = round(float(rng.uniform(1.0, 5.5)), 1)
-        plat   = str(rng.choice(PLATFORMS_DISPLAY))
-        try:
-            risk_label, risk_proba = predict_risk(
-                age=20, gender_str="Female", primary_platform=plat,
-                social_hrs=social, sleep_hrs=sleep,
-                academic_str="Undergraduate", rel_str="Single",
-                region_str="North America"
-            )
-        except Exception:
-            risk_label, risk_proba = "medium_risk", {}
-        try:
-            exam_pred = predict_exam(study, social, sleep, int(rng.integers(4, 10)))
-        except Exception:
-            exam_pred = str(rng.choice(["High","Medium","Low"]))
-        entry = {
-            "date"                : d,
-            "platforms"           : [{"platform": plat, "hours": social}],
-            "social_media_time_hrs": social,
-            "primary_platform"    : plat,
-            "sleep_hours"         : sleep,
-            "study_hours"         : study,
-            "mental_health_rating": int(rng.integers(4, 10)),
-            "conflicts"           : int(rng.integers(0, 4)),
-            "exercise_days"       : int(rng.integers(0, 6)),
-            "dominant_emotion"    : str(rng.choice(["Happy","Neutral","Anxious","Bored","Sad"])),
-            "detox_days"          : int(rng.integers(0, 3)),
-            "risk_label"          : risk_label,
-            "risk_proba"          : risk_proba,
-            "exam_pred"           : exam_pred,
-            "is_demo"             : True,
-        }
-        save_entry(entry)
-    st.session_state["demo_seeded"] = True
+    return EXAM_CLASSES[idx]
 
 # ── Award helper streaks ──────────────────────────────────────────────────────
 def _max_streak_num(entries_sorted, key, threshold, direction="high"):
@@ -254,14 +252,22 @@ def _consec_days(entries_sorted):
 def check_awards(history_real):
     s = sorted(history_real, key=lambda e: e["date"])
     earned = []
-    if any(e.get("detox_days", 0) > 0 for e in s):          earned.append("detox_starter")
-    if any((e.get("study_hours") or 0) >= 4 for e in s):    earned.append("study_hero")
-    if _max_streak_num(s, "social_media_time_hrs", 2, "low") >= 7: earned.append("low_screen")
-    if _max_streak_num(s, "sleep_hours", 8, "high") >= 5:   earned.append("sleep_champ")
-    if _max_streak_risk(s) >= 7:                             earned.append("wellness_week")
-    if _max_streak_balanced(s) >= 3:                         earned.append("balanced_life")
-    if _max_streak_emotion(s) >= 5:                          earned.append("no_fomo")
-    if _consec_days(s) >= 7:                                 earned.append("streak_7")
+    if any(e.get("detox_days", 0) > 0 for e in s):
+        earned.append("detox_starter")
+    if any((e.get("study_hours") or 0) >= 4 for e in s):
+        earned.append("study_hero")
+    if _max_streak_num(s, "social_media_time_hrs", 2, "low") >= 7:
+        earned.append("low_screen")
+    if _max_streak_num(s, "sleep_hours", 8, "high") >= 5:
+        earned.append("sleep_champ")
+    if _max_streak_risk(s) >= 7:
+        earned.append("wellness_week")
+    if _max_streak_balanced(s) >= 3:
+        earned.append("balanced_life")
+    if _max_streak_emotion(s) >= 5:
+        earned.append("no_fomo")
+    if _consec_days(s) >= 7:
+        earned.append("streak_7")
     return earned
 
 # ── Global CSS ────────────────────────────────────────────────────────────────
@@ -273,8 +279,8 @@ st.markdown("""
     background:#1C2537; border:1px solid #2A3550;
     border-radius:14px; padding:18px 20px; text-align:center; height:100%;
   }
-  .metric-val { font-size:2rem; font-weight:900; margin-bottom:4px; }
-  .metric-lbl { font-size:.72rem; color:#6B7A99; letter-spacing:.05em; }
+  .metric-val  { font-size:2rem; font-weight:900; margin-bottom:4px; }
+  .metric-lbl  { font-size:.72rem; color:#6B7A99; letter-spacing:.05em; }
   .badge-low    {background:#0D2E22;color:#34D399;border:1px solid #34D39944;border-radius:20px;padding:3px 12px;font-weight:700;font-size:.82rem;}
   .badge-medium {background:#2E2408;color:#FBBF24;border:1px solid #FBBF2444;border-radius:20px;padding:3px 12px;font-weight:700;font-size:.82rem;}
   .badge-high   {background:#2E0A0A;color:#F87171;border:1px solid #F8717144;border-radius:20px;padding:3px 12px;font-weight:700;font-size:.82rem;}
@@ -282,8 +288,8 @@ st.markdown("""
   .badge-exam-medium {background:#2E2408;color:#FBBF24;border:1px solid #FBBF2444;border-radius:20px;padding:3px 12px;font-weight:700;font-size:.82rem;}
   .badge-exam-low    {background:#2E0A0A;color:#F87171;border:1px solid #F8717144;border-radius:20px;padding:3px 12px;font-weight:700;font-size:.82rem;}
   .explain-box {background:#111827;border-left:3px solid #60A5FA;border-radius:0 10px 10px 0;padding:12px 16px;margin:8px 0;font-size:.875rem;color:#94A3B8;line-height:1.7;}
-  .rec-box  {background:#0A1A0D;border-left:3px solid #34D399;border-radius:0 10px 10px 0;padding:12px 16px;margin:6px 0;font-size:.875rem;color:#94A3B8;line-height:1.7;}
-  .warn-box {background:#1A1000;border-left:3px solid #FBBF24;border-radius:0 10px 10px 0;padding:12px 16px;margin:6px 0;font-size:.875rem;color:#94A3B8;line-height:1.7;}
+  .rec-box   {background:#0A1A0D;border-left:3px solid #34D399;border-radius:0 10px 10px 0;padding:12px 16px;margin:6px 0;font-size:.875rem;color:#94A3B8;line-height:1.7;}
+  .warn-box  {background:#1A1000;border-left:3px solid #FBBF24;border-radius:0 10px 10px 0;padding:12px 16px;margin:6px 0;font-size:.875rem;color:#94A3B8;line-height:1.7;}
   .demo-banner {background:#1A1500;border:1px solid #FBBF2444;border-radius:10px;padding:9px 14px;font-size:.78rem;color:#FBBF24;margin-bottom:10px;}
   #MainMenu, footer { visibility:hidden; }
   .block-container { padding-top:1.2rem; }
@@ -325,26 +331,26 @@ with TAB_LOG:
     with st.expander("👤 Your Profile  *(fill once — saved across entries)*",
                      expanded=not get_profile()):
         pc1, pc2, pc3 = st.columns(3)
-        name      = pc1.text_input("Name", value=get_profile().get("name",""))
-        age       = pc2.number_input("Age", 13, 35, value=int(get_profile().get("age", 20)))
+        name      = pc1.text_input("Name",   value=get_profile().get("name",""))
+        age       = pc2.number_input("Age",  13, 35, value=int(get_profile().get("age", 20)))
         gender    = pc3.selectbox("Gender",
                        ["Female","Male","Prefer not to say"],
                        index=["Female","Male","Prefer not to say"]
                              .index(get_profile().get("gender","Female")))
 
         pc4, pc5, pc6 = st.columns(3)
-        academic   = pc4.selectbox("Academic Level",
-                        ["High School","Undergraduate","Graduate"],
-                        index=["High School","Undergraduate","Graduate"]
-                              .index(get_profile().get("academic","Undergraduate")))
+        academic  = pc4.selectbox("Academic Level",
+                       ["High School","Undergraduate","Graduate"],
+                       index=["High School","Undergraduate","Graduate"]
+                             .index(get_profile().get("academic","Undergraduate")))
         rel_status = pc5.selectbox("Relationship Status",
-                        ["Single","In Relationship","Complicated"],
-                        index=["Single","In Relationship","Complicated"]
-                              .index(get_profile().get("rel_status","Single")))
-        country    = pc6.selectbox("Country",
-                        list(COUNTRY_REGION.keys()),
-                        index=list(COUNTRY_REGION.keys())
-                              .index(get_profile().get("country","USA")))
+                       ["Single","In Relationship","Complicated"],
+                       index=["Single","In Relationship","Complicated"]
+                             .index(get_profile().get("rel_status","Single")))
+        country   = pc6.selectbox("Country",
+                       list(COUNTRY_REGION.keys()),
+                       index=list(COUNTRY_REGION.keys())
+                             .index(get_profile().get("country","USA")))
 
         is_student = st.checkbox(
             "🎓 I'm a student and want exam performance predicted",
@@ -372,7 +378,7 @@ with TAB_LOG:
         else:
             st.session_state[plat_key] = [{"platform":"Instagram","hours":2.0}]
 
-    platlist  = st.session_state[plat_key]
+    platlist = st.session_state[plat_key]
     to_remove = None
     for idx, row in enumerate(platlist):
         c1, c2, c3 = st.columns([3, 2, 1])
@@ -394,7 +400,7 @@ with TAB_LOG:
         platlist.append({"platform":"YouTube","hours":1.0})
         st.rerun()
 
-    total_social     = round(sum(r["hours"] for r in platlist), 1)
+    total_social    = round(sum(r["hours"] for r in platlist), 1)
     primary_platform = max(platlist, key=lambda r: r["hours"])["platform"]
     st.info(f"**Total social media today: {total_social} hrs** · Primary: {primary_platform}")
 
@@ -406,13 +412,13 @@ with TAB_LOG:
     sleep_hrs     = lc1.slider("Sleep Hours", 3.0, 12.0,
                                 value=float(existing["sleep_hours"]) if existing else 7.0, step=0.5)
     exercise_days = lc2.slider("Exercise (days/week)", 0, 7,
-                                value=int(existing.get("exercise_days", 3)) if existing else 3)
+                                value=int(existing.get("exercise_days",3)) if existing else 3)
     detox_days    = lc3.slider("Detox Days this week", 0, 7,
-                                value=int(existing.get("detox_days", 0)) if existing else 0)
+                                value=int(existing.get("detox_days",0)) if existing else 0)
 
     lc4, lc5 = st.columns(2)
     conflicts = lc4.slider("Conflicts over social media (0–5)", 0, 5,
-                            value=int(existing.get("conflicts", 1)) if existing else 1)
+                            value=int(existing.get("conflicts",1)) if existing else 1)
     emotion   = lc5.selectbox("Dominant Emotion Today",
                                ["Happy","Neutral","Anxious","Bored","Sad","Angry"],
                                index=["Happy","Neutral","Anxious","Bored","Sad","Angry"]
@@ -427,19 +433,18 @@ with TAB_LOG:
         st.caption("You opted in for exam performance prediction — fill these in.")
         ac1, ac2 = st.columns(2)
         study_hrs     = ac1.slider("Study Hours Today", 0.0, 12.0,
-                                    value=float(existing.get("study_hours", 2.0)) if existing else 2.0,
-                                    step=0.5)
+                                    value=float(existing.get("study_hours",2.0)) if existing else 2.0, step=0.5)
         mental_rating = ac2.slider("Mental Health Rating (1–10)", 1, 10,
-                                    value=int(existing.get("mental_health_rating", 7)) if existing else 7)
+                                    value=int(existing.get("mental_health_rating",7)) if existing else 7)
 
     st.divider()
 
-    # ── Save & run models ─────────────────────────────────────────────────────
+    # ── Save & run models ────────────────────────────────────────────────────
     if st.button("✅ Save Entry & Analyse", type="primary", use_container_width=True):
-        g = profile.get("gender", "Female")
+        g = profile.get("gender","Female")
         if g == "Prefer not to say":
             g = "Female"
-        region = COUNTRY_REGION.get(profile.get("country", "USA"), "Other")
+        region = COUNTRY_REGION.get(profile.get("country","USA"), "Other")
 
         with st.spinner("Running models…"):
             risk_label, risk_proba = predict_risk(
@@ -448,32 +453,31 @@ with TAB_LOG:
                 primary_platform = primary_platform,
                 social_hrs       = total_social,
                 sleep_hrs        = sleep_hrs,
-                academic_str     = profile.get("academic", "Undergraduate"),
-                rel_str          = profile.get("rel_status", "Single"),
+                academic_str     = profile.get("academic","Undergraduate"),
+                rel_str          = profile.get("rel_status","Single"),
                 region_str       = region,
             )
             exam_pred = None
             if profile.get("is_student", True) and study_hrs is not None:
-                exam_pred = predict_exam(
-                    study_hrs, total_social, sleep_hrs, mental_rating or 7
-                )
+                exam_pred = predict_exam(study_hrs, total_social, sleep_hrs,
+                                         mental_rating or 7)
 
         entry = {
-            "date"                 : log_date.isoformat(),
-            "platforms"            : [dict(p) for p in platlist],
+            "date"                : log_date.isoformat(),
+            "platforms"           : [dict(p) for p in platlist],
             "social_media_time_hrs": total_social,
-            "primary_platform"     : primary_platform,
-            "sleep_hours"          : sleep_hrs,
-            "exercise_days"        : exercise_days,
-            "detox_days"           : detox_days,
-            "conflicts"            : conflicts,
-            "dominant_emotion"     : emotion,
-            "study_hours"          : study_hrs,
-            "mental_health_rating" : mental_rating,
-            "risk_label"           : risk_label,
-            "risk_proba"           : risk_proba,
-            "exam_pred"            : exam_pred,
-            "is_demo"              : False,
+            "primary_platform"    : primary_platform,
+            "sleep_hours"         : sleep_hrs,
+            "exercise_days"       : exercise_days,
+            "detox_days"          : detox_days,
+            "conflicts"           : conflicts,
+            "dominant_emotion"    : emotion,
+            "study_hours"         : study_hrs,
+            "mental_health_rating": mental_rating,
+            "risk_label"          : risk_label,
+            "risk_proba"          : risk_proba,
+            "exam_pred"           : exam_pred,
+            "is_demo"             : False,
         }
         save_entry(entry)
         st.session_state["last_entry"] = entry
@@ -502,7 +506,7 @@ with TAB_DASH:
         st.info("👈 Fill in the Daily Log first to see your personalised results here.")
         st.stop()
 
-    profile   = get_profile()
+    profile = get_profile()
     name_disp = (profile.get("name") or "Your") + ("'s" if profile.get("name") else "")
 
     st.markdown(f"### {name_disp} Wellness Dashboard")
@@ -514,6 +518,7 @@ with TAB_DASH:
     tier_css   = {"low_risk":"low","medium_risk":"medium","high_risk":"high"}[risk_label]
     tier_emoji = {"low_risk":"🟢","medium_risk":"🟡","high_risk":"🔴"}[risk_label]
     tier_name  = {"low_risk":"Low Risk","medium_risk":"Medium Risk","high_risk":"High Risk"}[risk_label]
+    tier_color = {"low_risk":"#34D399","medium_risk":"#FBBF24","high_risk":"#F87171"}[risk_label]
 
     d1, d2, d3 = st.columns(3)
     with d1:
@@ -525,14 +530,14 @@ with TAB_DASH:
         </div>""", unsafe_allow_html=True)
 
     with d2:
-        social   = last_entry.get("social_media_time_hrs", 0)
-        sleep    = last_entry.get("sleep_hours", 0)
-        s_color  = "#F87171" if social > 4 else "#FBBF24" if social > 2 else "#34D399"
-        sl_color = "#F87171" if sleep < 6  else "#FBBF24" if sleep < 7  else "#A78BFA"
+        social = last_entry.get("social_media_time_hrs", 0)
+        sleep  = last_entry.get("sleep_hours", 0)
+        s_color = "#F87171" if social>4 else "#FBBF24" if social>2 else "#34D399"
+        sl_color = "#F87171" if sleep<6 else "#FBBF24" if sleep<7 else "#A78BFA"
         st.markdown(f"""<div class="metric-card">
           <div class="metric-val" style="color:{s_color}">{social}h</div>
           <div class="metric-lbl">Social Media Today</div>
-          <div style="margin-top:10px">
+          <div style="margin-top:10px" class="metric-val">
             <span style="color:{sl_color};font-size:1.8rem;font-weight:900">{sleep}h</span>
           </div>
           <div class="metric-lbl">Sleep Last Night</div>
@@ -558,6 +563,7 @@ with TAB_DASH:
 
     st.divider()
 
+    # Platforms breakdown
     if last_entry.get("platforms") and len(last_entry["platforms"]) > 1:
         st.markdown("**Platform breakdown today:**")
         cols = st.columns(len(last_entry["platforms"]))
@@ -569,6 +575,7 @@ with TAB_DASH:
     # ── Results sub-tabs ──────────────────────────────────────────────────────
     r1, r2, r3 = st.tabs(["🔍 Explanation", "💡 Recommendations", "📊 Trends"])
 
+    # ── Explanation ───────────────────────────────────────────────────────────
     with r1:
         st.markdown("#### What your Mental Health Risk score means")
         explains = {
@@ -606,8 +613,8 @@ with TAB_DASH:
             st.markdown("#### What your Exam Performance prediction means")
             exam_explains = {
                 "High": (
-                    "**High performance predicted.** Your study hours and sleep are strong inputs. "
-                    "Study time is the dominant predictor (r=+0.825, DF6). "
+                    "**High performance predicted.** Your study hours and sleep are strong inputs "
+                    "for the Ridge model. Study time is the dominant predictor (r=+0.825, DF6). "
                     "Students studying 5+ hrs averaged ~90.8 on exams."
                 ),
                 "Medium": (
@@ -636,6 +643,7 @@ self-reported mental health rating. Note: social media hours are weakly negative
 while study hours dominate (r=+0.825). The model captures this nuance.
 </div>""", unsafe_allow_html=True)
 
+    # ── Recommendations ───────────────────────────────────────────────────────
     with r2:
         st.markdown("#### Personalised Recommendations")
         st.caption("Based on your entry and findings from our 6 datasets.")
@@ -650,6 +658,7 @@ while study hours dominate (r=+0.825). The model captures this nuance.
 
         recs = []
 
+        # Screen time
         if social > 4:
             recs.append(("warn", "📵 Screen Time",
                 f"You used **{social} hrs** of social media today. Our analysis (DF3, DF2) found "
@@ -663,6 +672,7 @@ while study hours dominate (r=+0.825). The model captures this nuance.
             recs.append(("rec", "📵 Screen Time",
                 f"**{social} hrs** — you're in the ideal range. Keep it up!"))
 
+        # Multi-platform note
         if len(platforms) > 1:
             platform_str = ", ".join(f"{p['platform']} ({p['hours']}h)" for p in platforms)
             recs.append(("rec", "📱 Multi-Platform Tip",
@@ -670,6 +680,7 @@ while study hours dominate (r=+0.825). The model captures this nuance.
                 f"as total hours — each platform context-switches your attention. Consider consolidating "
                 f"to 1–2 platforms per day."))
 
+        # Sleep
         if sleep < 6:
             recs.append(("warn", "💤 Sleep",
                 f"**{sleep} hrs** is critically low. Sleep is the strongest happiness predictor across "
@@ -683,6 +694,7 @@ while study hours dominate (r=+0.825). The model captures this nuance.
             recs.append(("rec", "💤 Sleep",
                 f"**{sleep} hrs** — excellent. Sleep is your strongest protective factor."))
 
+        # Study
         if profile.get("is_student", True) and study is not None:
             if study < 2:
                 recs.append(("warn", "📚 Study Time",
@@ -697,6 +709,7 @@ while study hours dominate (r=+0.825). The model captures this nuance.
                 recs.append(("rec", "📚 Study Time",
                     f"**{study} hrs** is solid. The top performance tier tends to appear at 4–5 hrs."))
 
+        # Conflicts
         if conflicts >= 3:
             recs.append(("warn", "⚡ Conflicts",
                 f"**{conflicts} conflicts** over social media today. Higher conflict scores strongly "
@@ -704,6 +717,7 @@ while study hours dominate (r=+0.825). The model captures this nuance.
                 f"or interactions are driving this — our data shows WhatsApp and Snapchat had the "
                 f"highest conflict-associated addiction scores."))
 
+        # Emotion
         if emotion in ["Anxious","Bored"]:
             recs.append(("warn", "🧘 Emotional State",
                 f"You reported feeling **{emotion.lower()}**. DF5 found users with boredom or anxiety "
@@ -711,6 +725,7 @@ while study hours dominate (r=+0.825). The model captures this nuance.
                 f"extending rather than relieving these feelings. Try replacing one scroll session "
                 f"with a 10-min walk or 5-min breathing exercise."))
 
+        # Detox
         if detox == 0:
             recs.append(("warn", "🌿 Digital Detox",
                 "No detox days this week. Even **1–2 days** off are associated with noticeably better "
@@ -725,22 +740,23 @@ while study hours dominate (r=+0.825). The model captures this nuance.
             st.markdown(f'<div class="{box}"><b>{title}</b><br/>{text}</div>',
                         unsafe_allow_html=True)
 
+    # ── Trends ────────────────────────────────────────────────────────────────
     with r3:
         st.markdown("#### Your Trend Charts")
-        all_scored        = [e for e in get_history() if e.get("risk_label")]
+        all_scored = [e for e in get_history() if e.get("risk_label")]
         all_scored_sorted = sorted(all_scored, key=lambda e: e["date"])
 
         if len(all_scored) < 3:
             st.info("📈 Log at least 3 entries (or load demo data in the Daily Log tab) "
                     "to unlock trend charts.")
         else:
-            dates_tr = [e["date"][-5:] for e in all_scored_sorted]
+            dates_tr  = [e["date"][-5:] for e in all_scored_sorted]
             df_tr = pd.DataFrame({
                 "Date"       : dates_tr,
-                "Social (h)" : [e.get("social_media_time_hrs", 0) for e in all_scored_sorted],
-                "Sleep (h)"  : [e.get("sleep_hours", 0) for e in all_scored_sorted],
+                "Social (h)" : [e.get("social_media_time_hrs",0) for e in all_scored_sorted],
+                "Sleep (h)"  : [e.get("sleep_hours",0) for e in all_scored_sorted],
                 "Study (h)"  : [e.get("study_hours") or 0 for e in all_scored_sorted],
-                "Risk Score" : [RISK_SCORE_MAP.get(e.get("risk_label","low_risk"), 20)
+                "Risk Score" : [RISK_SCORE_MAP.get(e.get("risk_label","low_risk"),20)
                                 for e in all_scored_sorted],
             }).set_index("Date")
 
@@ -756,6 +772,7 @@ while study hours dominate (r=+0.825). The model captures this nuance.
                 st.caption("**Study Hours**")
                 st.line_chart(df_tr[["Study (h)"]], color=["#34D399"], height=180)
 
+            # 7-day summary
             st.divider()
             st.markdown("**7-Day Averages**")
             l7 = all_scored_sorted[-7:]
@@ -773,16 +790,17 @@ with TAB_HISTORY:
     if not history:
         st.info("No entries yet — fill in the Daily Log to get started!")
     else:
+        # Full chart at top
         scored_all = sorted([e for e in history if e.get("risk_label")],
                             key=lambda e: e["date"])
         if len(scored_all) >= 3:
             st.subheader("All-time Trends")
             df_all = pd.DataFrame({
                 "Date"       : [e["date"][-5:] for e in scored_all],
-                "Social (h)" : [e.get("social_media_time_hrs", 0) for e in scored_all],
-                "Sleep (h)"  : [e.get("sleep_hours", 0) for e in scored_all],
+                "Social (h)" : [e.get("social_media_time_hrs",0) for e in scored_all],
+                "Sleep (h)"  : [e.get("sleep_hours",0) for e in scored_all],
                 "Study (h)"  : [e.get("study_hours") or 0 for e in scored_all],
-                "Risk Score" : [RISK_SCORE_MAP.get(e.get("risk_label","low_risk"), 20)
+                "Risk Score" : [RISK_SCORE_MAP.get(e.get("risk_label","low_risk"),20)
                                 for e in scored_all],
             }).set_index("Date")
 
@@ -795,6 +813,7 @@ with TAB_HISTORY:
             st.line_chart(df_all[[metric_choice]], color=color_map[metric_choice], height=220)
             st.divider()
 
+        # Entry list
         st.subheader(f"All Entries ({len(history)} days)")
         for entry in sorted(history, key=lambda e: e["date"], reverse=True):
             demo_tag  = " 🧪" if entry.get("is_demo") else ""
@@ -826,10 +845,10 @@ with TAB_HISTORY:
 #  TAB 4 — GOALS
 # ══════════════════════════════════════════════════════════════════════════════
 with TAB_GOALS:
-    real_h   = [e for e in get_history() if not e.get("is_demo")]
-    last_r   = next((e for e in sorted(real_h, key=lambda e: e["date"], reverse=True)), None)
-    last7_r  = sorted(real_h, key=lambda e: e["date"], reverse=True)[:7]
-    profile  = get_profile()
+    real_h  = [e for e in get_history() if not e.get("is_demo")]
+    last_r  = next((e for e in sorted(real_h, key=lambda e:e["date"], reverse=True)), None)
+    last7_r = sorted(real_h, key=lambda e:e["date"], reverse=True)[:7]
+    profile = get_profile()
 
     st.subheader("Daily & Weekly Goals")
     st.caption("Targets from our 6-dataset midterm analysis.")
@@ -837,14 +856,14 @@ with TAB_GOALS:
     st.markdown("#### Today's Goals")
     if last_r:
         def goal_prog(label, current, target):
-            pct  = min(1.0, current / target)
+            pct = min(1.0, current / target)
             done = "✅" if pct >= 1.0 else "⏳"
             st.markdown(f"{done} **{label}**: {current} / {target}")
             st.progress(pct)
 
-        goal_prog("Social Media < 4 hrs",   last_r.get("social_media_time_hrs", 0), 4)
-        goal_prog("Sleep ≥ 7 hrs",          last_r.get("sleep_hours", 0), 7)
-        goal_prog("Exercise ≥ 3 days/week", last_r.get("exercise_days", 0), 3)
+        goal_prog("Social Media < 4 hrs",  last_r.get("social_media_time_hrs",0), 4)
+        goal_prog("Sleep ≥ 7 hrs",         last_r.get("sleep_hours",0), 7)
+        goal_prog("Exercise ≥ 3 days/week", last_r.get("exercise_days",0), 3)
         if profile.get("is_student", True):
             goal_prog("Study ≥ 3 hrs", last_r.get("study_hours") or 0, 3)
     else:
@@ -853,14 +872,14 @@ with TAB_GOALS:
     st.divider()
     st.markdown("#### This Week's Goals (last 7 real entries)")
     if last7_r:
-        detox_ct = sum(1 for e in last7_r if e.get("detox_days", 0) > 0)
-        low_conf = sum(1 for e in last7_r if e.get("conflicts", 10) <= 1)
-        happy_ct = sum(1 for e in last7_r if e.get("dominant_emotion") == "Happy")
-        green_ct = sum(1 for e in last7_r if e.get("risk_label") == "low_risk")
+        detox_ct = sum(1 for e in last7_r if e.get("detox_days",0)>0)
+        low_conf = sum(1 for e in last7_r if e.get("conflicts",10)<=1)
+        happy_ct = sum(1 for e in last7_r if e.get("dominant_emotion")=="Happy")
+        green_ct = sum(1 for e in last7_r if e.get("risk_label")=="low_risk")
 
         def week_prog(label, current, target):
             st.markdown(f"**{label}**: {current}/{target}")
-            st.progress(min(1.0, current / target))
+            st.progress(min(1.0, current/target))
 
         week_prog("🌿 Detox Days (goal: 4)",       detox_ct, 4)
         week_prog("🔕 Low Conflict Days (goal: 5)", low_conf, 5)
