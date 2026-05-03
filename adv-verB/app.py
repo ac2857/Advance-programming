@@ -749,20 +749,16 @@ while study hours dominate (r=+0.825). The model captures this nuance.
         conflicts = last_entry.get("conflicts", 0)
         emotion   = last_entry.get("dominant_emotion", "Neutral")
 
-        # Helper to render a clickable resource card
+        # Helper — pure native Streamlit, no raw HTML injection
         def res_card(emoji, title, desc, url, tag=""):
-            tag_html = f'<span style="background:#2A3550;color:#94A3B8;font-size:.68rem;padding:2px 8px;border-radius:10px;margin-left:6px">{tag}</span>' if tag else ""
-            st.markdown(
-                f'''<div style="background:#1C2537;border:1px solid #2A3550;border-radius:12px;
-                padding:14px 16px;margin-bottom:10px;">
-                <div style="font-size:1.1rem;margin-bottom:4px">{emoji}
-                  <b><a href="{url}" target="_blank" style="color:#60A5FA;text-decoration:none">{title}</a></b>
-                  {tag_html}
-                </div>
-                <div style="color:#94A3B8;font-size:.82rem;line-height:1.5">{desc}</div>
-                </div>''',
-                unsafe_allow_html=True,
-            )
+            tag_str = f"  `{tag}`" if tag else ""
+            with st.container(border=True):
+                col_a, col_b = st.columns([8, 2])
+                with col_a:
+                    st.markdown(f"**{emoji} [{title}]({url})**{tag_str}")
+                    st.caption(desc)
+                with col_b:
+                    st.link_button("Open →", url, use_container_width=True)
 
         # ── HIGH RISK ─────────────────────────────────────────────────────────
         if risk_label == "high_risk":
