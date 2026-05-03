@@ -582,7 +582,7 @@ with TAB_DASH:
     st.divider()
 
     # ── Results sub-tabs ──────────────────────────────────────────────────────
-    r1, r2, r3 = st.tabs(["🔍 Explanation", "💡 Recommendations", "📊 Trends"])
+    r1, r2, r3, r4 = st.tabs(["🔍 Explanation", "💡 Recommendations", "📚 Resources", "📊 Trends"])
 
     # ── Explanation ───────────────────────────────────────────────────────────
     with r1:
@@ -667,7 +667,6 @@ while study hours dominate (r=+0.825). The model captures this nuance.
 
         recs = []
 
-        # Screen time
         if social > 4:
             recs.append(("warn", "📵 Screen Time",
                 f"You used **{social} hrs** of social media today. Our analysis (DF3, DF2) found "
@@ -681,7 +680,6 @@ while study hours dominate (r=+0.825). The model captures this nuance.
             recs.append(("rec", "📵 Screen Time",
                 f"**{social} hrs** — you're in the ideal range. Keep it up!"))
 
-        # Multi-platform note
         if len(platforms) > 1:
             platform_str = ", ".join(f"{p['platform']} ({p['hours']}h)" for p in platforms)
             recs.append(("rec", "📱 Multi-Platform Tip",
@@ -689,7 +687,6 @@ while study hours dominate (r=+0.825). The model captures this nuance.
                 f"as total hours — each platform context-switches your attention. Consider consolidating "
                 f"to 1–2 platforms per day."))
 
-        # Sleep
         if sleep < 6:
             recs.append(("warn", "💤 Sleep",
                 f"**{sleep} hrs** is critically low. Sleep is the strongest happiness predictor across "
@@ -703,7 +700,6 @@ while study hours dominate (r=+0.825). The model captures this nuance.
             recs.append(("rec", "💤 Sleep",
                 f"**{sleep} hrs** — excellent. Sleep is your strongest protective factor."))
 
-        # Study
         if profile.get("is_student", True) and study is not None:
             if study < 2:
                 recs.append(("warn", "📚 Study Time",
@@ -718,7 +714,6 @@ while study hours dominate (r=+0.825). The model captures this nuance.
                 recs.append(("rec", "📚 Study Time",
                     f"**{study} hrs** is solid. The top performance tier tends to appear at 4–5 hrs."))
 
-        # Conflicts
         if conflicts >= 3:
             recs.append(("warn", "⚡ Conflicts",
                 f"**{conflicts} conflicts** over social media today. Higher conflict scores strongly "
@@ -726,7 +721,6 @@ while study hours dominate (r=+0.825). The model captures this nuance.
                 f"or interactions are driving this — our data shows WhatsApp and Snapchat had the "
                 f"highest conflict-associated addiction scores."))
 
-        # Emotion
         if emotion in ["Anxious","Bored"]:
             recs.append(("warn", "🧘 Emotional State",
                 f"You reported feeling **{emotion.lower()}**. DF5 found users with boredom or anxiety "
@@ -734,7 +728,6 @@ while study hours dominate (r=+0.825). The model captures this nuance.
                 f"extending rather than relieving these feelings. Try replacing one scroll session "
                 f"with a 10-min walk or 5-min breathing exercise."))
 
-        # Detox
         if detox == 0:
             recs.append(("warn", "🌿 Digital Detox",
                 "No detox days this week. Even **1–2 days** off are associated with noticeably better "
@@ -749,8 +742,203 @@ while study hours dominate (r=+0.825). The model captures this nuance.
             st.markdown(f'<div class="{box}"><b>{title}</b><br/>{text}</div>',
                         unsafe_allow_html=True)
 
-    # ── Trends ────────────────────────────────────────────────────────────────
+    # ── Resources ─────────────────────────────────────────────────────────────
     with r3:
+        social    = last_entry.get("social_media_time_hrs", 0)
+        sleep     = last_entry.get("sleep_hours", 0)
+        conflicts = last_entry.get("conflicts", 0)
+        emotion   = last_entry.get("dominant_emotion", "Neutral")
+
+        # Helper to render a clickable resource card
+        def res_card(emoji, title, desc, url, tag=""):
+            tag_html = f'<span style="background:#2A3550;color:#94A3B8;font-size:.68rem;padding:2px 8px;border-radius:10px;margin-left:6px">{tag}</span>' if tag else ""
+            st.markdown(
+                f'''<div style="background:#1C2537;border:1px solid #2A3550;border-radius:12px;
+                padding:14px 16px;margin-bottom:10px;">
+                <div style="font-size:1.1rem;margin-bottom:4px">{emoji}
+                  <b><a href="{url}" target="_blank" style="color:#60A5FA;text-decoration:none">{title}</a></b>
+                  {tag_html}
+                </div>
+                <div style="color:#94A3B8;font-size:.82rem;line-height:1.5">{desc}</div>
+                </div>''',
+                unsafe_allow_html=True,
+            )
+
+        # ── HIGH RISK ─────────────────────────────────────────────────────────
+        if risk_label == "high_risk":
+            st.error("🔴 **High Risk — Action Recommended**")
+            st.markdown(
+                "Your score indicates your current habits are significantly affecting your mental health. "
+                "The resources below are curated based on which specific factors are driving your risk."
+            )
+
+            if social > 4:
+                st.markdown("##### 📵 Reduce Social Media Use")
+                res_card("📱", "Screen Time — Apple Support",
+                    "Step-by-step guide to set daily app limits on iPhone so TikTok / Instagram cut off automatically.",
+                    "https://support.apple.com/en-us/105122", "iOS")
+                res_card("🤖", "Digital Wellbeing — Google Support",
+                    "Set app timers and enable Wind Down mode on Android to block social apps at bedtime.",
+                    "https://support.google.com/android/answer/9346420", "Android")
+                res_card("🧠", "How to Break a Social Media Addiction — Verywell Mind",
+                    "Psychologist-reviewed strategies for reducing compulsive scrolling and FOMO.",
+                    "https://www.verywellmind.com/how-to-break-a-social-media-addiction-4771047")
+                res_card("📖", "r/nosurf — Reddit community",
+                    "A 900k-member community of people cutting back on internet use, with tips, accountability threads, and success stories.",
+                    "https://www.reddit.com/r/nosurf/")
+
+            if sleep < 6:
+                st.markdown("##### 💤 Emergency Sleep Support")
+                res_card("🎵", "Sleep Playlist — Spotify",
+                    "Calm, slow-tempo music playlist clinically shown to slow heart rate and aid sleep onset.",
+                    "https://open.spotify.com/playlist/37i9dQZF1DWZd79rJ6a7lp", "Music")
+                res_card("🌬️", "4-7-8 Breathing Technique — Healthline",
+                    "Inhale 4s, hold 7s, exhale 8s. A science-backed method to fall asleep in under 2 minutes.",
+                    "https://www.healthline.com/health/4-7-8-breathing")
+                res_card("📱", "Calm App — Sleep Stories",
+                    "Free sleep stories and meditations. The 'Blue Gold' sleep story is the most-listened worldwide.",
+                    "https://www.calm.com/sleep", "App")
+                res_card("🎧", "Sleep With Me Podcast",
+                    "A deliberately boring podcast designed to distract an anxious mind so you fall asleep.",
+                    "https://www.sleepwithmepodcast.com/", "Podcast")
+
+            if conflicts >= 3:
+                st.markdown("##### ⚡ Managing Social Media Conflict & Anxiety")
+                res_card("🧘", "Headspace — Stress & Anxiety",
+                    "Guided meditations specifically for social anxiety, conflict stress, and FOMO. Free tier available.",
+                    "https://www.headspace.com/anxiety", "App")
+                res_card("📞", "Crisis Text Line",
+                    "If conflicts or stress feel overwhelming, text HOME to 741741. Free, confidential 24/7.",
+                    "https://www.crisistextline.org/", "Crisis")
+
+            if emotion in ["Anxious", "Sad", "Angry"]:
+                st.markdown(f"##### 🧠 Resources for Feeling {emotion}")
+                res_card("🌿", "MindShift CBT — Anxiety Canada",
+                    "Free app using Cognitive Behavioural Therapy techniques for anxiety, worry, and panic. Highly rated.",
+                    "https://www.anxietycanada.com/resources/mindshift-cbt/", "App · Free")
+                res_card("📖", "Feeling Good — David D. Burns (PDF summary)",
+                    "The most-assigned book in therapy. This summary covers the key CBT techniques for mood improvement.",
+                    "https://feelinggood.com/", "Book")
+                res_card("🎵", "Mood-Lifting Music — Spotify",
+                    "Upbeat, science-backed playlist shown to improve mood within 15 minutes of listening.",
+                    "https://open.spotify.com/playlist/37i9dQZF1DX3rxVfibe1L0", "Music")
+            
+            st.markdown("##### 🆘 Professional Help")
+            res_card("🏥", "Find a Therapist — Psychology Today",
+                "Search for licensed therapists by location, specialty, and insurance. Filter for college counselors.",
+                "https://www.psychologytoday.com/us/therapists")
+            res_card("💬", "BetterHelp Online Therapy",
+                "Connect with a licensed therapist from your phone. Sliding scale pricing available for students.",
+                "https://www.betterhelp.com/")
+            res_card("🎓", "Active Minds — College Mental Health",
+                "Campus mental health resources and peer support specifically for college students.",
+                "https://www.activeminds.org/")
+
+        # ── MEDIUM RISK ───────────────────────────────────────────────────────
+        elif risk_label == "medium_risk":
+            st.warning("🟡 **Medium Risk — Build Better Habits**")
+            st.markdown(
+                "You're in the most actionable zone — small, consistent changes move people into "
+                "Low Risk within a week. Use these guides to build habits that stick."
+            )
+
+            st.markdown("##### 📅 Daily Habit Guides")
+            res_card("⏱️", "The 2-Minute Rule — James Clear (Atomic Habits)",
+                "The proven method for building new habits: make the new behaviour take less than 2 minutes to start.",
+                "https://jamesclear.com/how-to-build-habits")
+            res_card("📓", "Bullet Journal Method",
+                "Analog system for tracking daily goals, sleep, screen time, and mood without using your phone.",
+                "https://bulletjournal.com/pages/learn")
+            res_card("🔔", "One Sec — App for Mindful Phone Use",
+                "Adds a 1-second pause before opening social media apps — breaks automatic scrolling behaviour.",
+                "https://one-sec.app/", "App")
+
+            if sleep < 7:
+                st.markdown("##### 💤 Improve Your Sleep")
+                res_card("🎵", "Deep Sleep Music — YouTube",
+                    "8-hour ambient music with binaural beats tuned to delta wave sleep frequencies. No ads after it starts.",
+                    "https://www.youtube.com/watch?v=rkZl7ln8aWc", "Music · Free")
+                res_card("🌙", "Sleep Foundation — Sleep Hygiene Guide",
+                    "Evidence-based checklist: screen cutoff times, room temperature, caffeine cutoffs, and wind-down routines.",
+                    "https://www.sleepfoundation.org/sleep-hygiene")
+                res_card("📱", "Twilight — Blue Light Filter App",
+                    "Gradually removes blue light from your screen after sunset to trigger natural melatonin release.",
+                    "https://twilight.urbandroid.org/", "Android · Free")
+                res_card("🎵", "Rain & Thunder Sleep Sounds — Spotify",
+                    "White noise and nature sounds playlist. Brown noise is the most effective for most people.",
+                    "https://open.spotify.com/playlist/37i9dQZF1DWZd79rJ6a7lp", "Music")
+
+            if social > 2:
+                st.markdown("##### 📵 Screen Time Reduction")
+                res_card("📊", "Your Phone Is Changing Your Brain — YouTube (Kurzgesagt)",
+                    "6-minute video explaining the neuroscience of social media addiction. Great for motivation.",
+                    "https://www.youtube.com/watch?v=wPTBTPb1BFI", "Video")
+                res_card("🌿", "Digital Detox Challenge — 7-Day Plan",
+                    "A structured week-by-week plan for gradually reducing social media use without going cold turkey.",
+                    "https://www.thedigitaldetox.org/")
+                res_card("📱", "Forest App — Focus & Detox",
+                    "Plant a virtual tree when you stay off your phone. If you leave, the tree dies. Gamified focus.",
+                    "https://www.forestapp.cc/", "App")
+
+            st.markdown("##### 🧘 Stress Management")
+            res_card("🧠", "Headspace — Basics Course",
+                "Free 10-day beginner meditation course. 10 minutes/day. Rated the most accessible intro to meditation.",
+                "https://www.headspace.com/meditation/meditation-for-beginners", "App · Free Tier")
+            res_card("📖", "Stress Less, Accomplish More — Emily Fletcher",
+                "Meditation technique designed specifically for busy students — done in 2x 15-min sessions per day.",
+                "https://zivameditation.com/")
+            res_card("🎵", "Lo-fi Beats for Focus — Spotify",
+                "Steady 70–90 BPM instrumental music shown to reduce cortisol and improve focus.",
+                "https://open.spotify.com/playlist/37i9dQZF1DWWQRwui0ExPn", "Music")
+
+        # ── LOW RISK ──────────────────────────────────────────────────────────
+        else:
+            st.success("🟢 **Low Risk — You're Thriving! Here's How to Stay There**")
+            st.markdown(
+                "Your habits are in a healthy range. These resources help you maintain momentum, "
+                "go deeper on wellbeing, and support others around you."
+            )
+
+            st.markdown("##### 🌱 Maintain & Grow")
+            res_card("📖", "Atomic Habits — James Clear",
+                "The definitive guide to building systems that make good habits automatic and bad ones harder to do.",
+                "https://jamesclear.com/atomic-habits", "Book")
+            res_card("🎧", "Huberman Lab Podcast — Sleep & Performance",
+                "Stanford neuroscientist Andrew Huberman on optimising sleep, focus, and mental performance.",
+                "https://www.hubermanlab.com/episodes", "Podcast")
+            res_card("🧘", "Wim Hof Breathing — Guided Session",
+                "Advanced breathing technique for stress resilience, energy, and immune function. 11-minute session.",
+                "https://www.youtube.com/watch?v=tybOi4hjZFQ", "Video · Free")
+
+            st.markdown("##### 🎵 Focus & Flow State Music")
+            res_card("🎵", "Brain.fm — Focus Music",
+                "AI-generated music scientifically designed to induce focus states. Different from regular lo-fi.",
+                "https://www.brain.fm/", "App")
+            res_card("🎵", "Deep Work Playlist — Spotify",
+                "Instrumental tracks chosen by the Deep Work community for sustained 2–4 hr focus sessions.",
+                "https://open.spotify.com/playlist/37i9dQZF1DX8NTLI2TtZa6", "Music")
+
+            st.markdown("##### 🤝 Help Others")
+            res_card("💬", "Active Minds — Peer Support Training",
+                "Learn how to support friends who may be struggling with social media and mental health.",
+                "https://www.activeminds.org/programs/send-silence-packing/")
+            res_card("📣", "Share Your Story — This Dataset",
+                "Our midterm found that talking about usage patterns reduces FOMO. Share your wellness journey to help others normalise healthy habits.",
+                "https://www.reddit.com/r/digitalminimalism/")
+
+        # ── Specific sleep resources always shown if sleep is low ─────────────
+        if risk_label != "high_risk" and sleep < 7:
+            st.divider()
+            st.markdown("##### 💤 Sleep Improvement (your sleep is below 7 hrs)")
+            res_card("🎵", "Sleep Playlist — Calm Radio",
+                "Continuous sleep music with no ads. Piano and ambient sounds at 60 BPM to match resting heart rate.",
+                "https://www.calmradio.com/sleep", "Music · Free")
+            res_card("🌙", "CBT-I Coach — Sleep App",
+                "Free app from the US Department of Veterans Affairs based on Cognitive Behavioural Therapy for Insomnia.",
+                "https://mobile.va.gov/app/cbt-i-coach", "App · Free")
+
+    # ── Trends ────────────────────────────────────────────────────────────────
+    with r4:
         st.markdown("#### Your Trend Charts")
         all_scored = [e for e in get_history() if e.get("risk_label")]
         all_scored_sorted = sorted(all_scored, key=lambda e: e["date"])
