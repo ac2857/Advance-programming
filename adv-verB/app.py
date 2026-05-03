@@ -29,11 +29,14 @@ st.set_page_config(
 )
 
 # ── Load models ───────────────────────────────────────────────────────────────
+import os as _os
+_DIR = _os.path.dirname(_os.path.abspath(__file__))
+
 @st.cache_resource
 def load_models():
-    with open("wellness_app_outputs.pkl", "rb") as f:
+    with open(_os.path.join(_DIR, "wellness_app_outputs.pkl"), "rb") as f:
         rb = pickle.load(f)
-    with open("student_ridge_model.pkl", "rb") as f:
+    with open(_os.path.join(_DIR, "student_ridge_model.pkl"), "rb") as f:
         eb = pickle.load(f)
     return rb, eb
 
