@@ -252,6 +252,8 @@ def _consec_days(entries_sorted):
 def check_awards(history_real):
     s = sorted(history_real, key=lambda e: e["date"])
     earned = []
+    if not s:
+        return earned
     if any(e.get("detox_days", 0) > 0 for e in s):
         earned.append("detox_starter")
     if any((e.get("study_hours") or 0) >= 4 for e in s):
@@ -268,6 +270,15 @@ def check_awards(history_real):
         earned.append("no_fomo")
     if _consec_days(s) >= 7:
         earned.append("streak_7")
+    # New badges — unlock on first qualifying entry
+    if any(e.get("sleep_hours", 0) >= 7 for e in s):
+        earned.append("sleep_starter")
+    if len(s) >= 1:
+        earned.append("first_log")
+    if any(e.get("exercise_days", 0) >= 3 for e in s):
+        earned.append("active_week")
+    if any(e.get("conflicts", 99) == 0 for e in s):
+        earned.append("conflict_free")
     return earned
 
 # ── Global CSS ────────────────────────────────────────────────────────────────
@@ -298,14 +309,12 @@ st.markdown("""
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.markdown("""
-<div style="text-align:center;margin-bottom:1.2rem;">
-  <div style="font-size:1.7rem;font-weight:900;letter-spacing:-.03em;
-    background:linear-gradient(90deg,#34D399,#60A5FA);
-    -webkit-background-clip:text;-webkit-text-fill-color:transparent;">
+<div style="text-align:center;margin-bottom:1.2rem;padding:18px 0 10px;">
+  <span style="font-size:2rem;font-weight:900;letter-spacing:-.03em;color:#34D399;">
     💚 Digital Wellness Advisor
-  </div>
-  <div style="color:#6B7A99;font-size:.78rem;margin-top:2px;">
-    PEA Team · Advanced Python SP2026 · RandomForest + Ridge ML Models
+  </span>
+  <div style="color:#6B7A99;font-size:.78rem;margin-top:6px;">
+    PEA Team &nbsp;·&nbsp; Advanced Python SP2026 &nbsp;·&nbsp; RandomForest + Ridge ML Models
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -850,51 +859,92 @@ with TAB_GOALS:
     last7_r = sorted(real_h, key=lambda e:e["date"], reverse=True)[:7]
     profile = get_profile()
 
-    st.subheader("Daily & Weekly Goals")
-    st.caption("Targets from our 6-dataset midterm analysis.")
+    st.subheader("🎯 Daily & Weekly Goals")
+    st.caption("Targets calibrated from our 6-dataset midterm analysis. Goals always show — progress fills as you log data.")
 
-    st.markdown("#### Today's Goals")
-    if last_r:
-        def goal_prog(label, current, target):
-            pct = min(1.0, current / target)
-            done = "✅" if pct >= 1.0 else "⏳"
-            st.markdown(f"{done} **{label}**: {current} / {target}")
-            st.progress(pct)
+    # ── Always-visible daily goals ────────────────────────────────────────────
+    st.markdown("#### 📅 Today's Goals")
+    if not last_r:
+        st.info("👈 Log today's data to start tracking progress — goals are shown below so you know what to aim for.")
 
-        goal_prog("Social Media < 4 hrs",  last_r.get("social_media_time_hrs",0), 4)
-        goal_prog("Sleep ≥ 7 hrs",         last_r.get("sleep_hours",0), 7)
-        goal_prog("Exercise ≥ 3 days/week", last_r.get("exercise_days",0), 3)
-        if profile.get("is_student", True):
-            goal_prog("Study ≥ 3 hrs", last_r.get("study_hours") or 0, 3)
-    else:
-        st.info("Log your first real entry to see goal progress.")
+    # Pull values: 0 if no entry yet so bars render empty
+    sm_val  = last_r.get("social_media_time_hrs", 0) if last_r else 0
+    sl_val  = last_r.get("sleep_hours", 0)            if last_r else 0
+    ex_val  = last_r.get("exercise_days", 0)          if last_r else 0
+    st_val  = (last_r.get("study_hours") or 0)        if last_r else 0
+
+    def goal_row(icon, label, current, target, unit, higher_is_better=True, note=""):
+        pct  = min(1.0, current / max(target, 0.01))
+        # for social media lower is better — flip logic
+        if not higher_is_better:
+            done = current <= target and current > 0
+        else:
+            done = pct >= 1.0
+        status = "✅" if done else ("⏳" if current > 0 else "○")
+        col1, col2 = st.columns([4, 1])
+        col1.markdown(f"**{icon} {label}**{(' — ' + note) if note else ''}")
+        col2.markdown(f"<div style='text-align:right;color:{'#34D399' if done else '#6B7A99'};font-weight:700'>{status} {current}/{target} {unit}</div>", unsafe_allow_html=True)
+        st.progress(pct if higher_is_better else min(1.0, (target - min(current, target)) / max(target, 0.01)))
+
+    goal_row("📵", "Social Media", sm_val, 4, "hrs", higher_is_better=False,
+             note="stay under 4 hrs")
+    goal_row("💤", "Sleep",        sl_val, 7, "hrs", higher_is_better=True,
+             note="aim for 7+ hrs")
+    goal_row("🏃", "Exercise",     ex_val, 3, "days/wk", higher_is_better=True,
+             note="3+ days this week")
+    if profile.get("is_student", True):
+        goal_row("📚", "Study",    st_val, 3, "hrs", higher_is_better=True,
+                 note="aim for 3+ hrs")
 
     st.divider()
-    st.markdown("#### This Week's Goals (last 7 real entries)")
-    if last7_r:
-        detox_ct = sum(1 for e in last7_r if e.get("detox_days",0)>0)
-        low_conf = sum(1 for e in last7_r if e.get("conflicts",10)<=1)
-        happy_ct = sum(1 for e in last7_r if e.get("dominant_emotion")=="Happy")
-        green_ct = sum(1 for e in last7_r if e.get("risk_label")=="low_risk")
 
-        def week_prog(label, current, target):
-            st.markdown(f"**{label}**: {current}/{target}")
-            st.progress(min(1.0, current/target))
+    # ── Always-visible weekly goals ───────────────────────────────────────────
+    st.markdown("#### 📆 This Week's Goals")
+    if not last7_r:
+        st.info("Weekly progress fills as you log more entries.")
 
-        week_prog("🌿 Detox Days (goal: 4)",       detox_ct, 4)
-        week_prog("🔕 Low Conflict Days (goal: 5)", low_conf, 5)
-        week_prog("😊 Happy Days (goal: 5)",        happy_ct, 5)
-        week_prog("🟢 Green Risk Days (goal: 5)",   green_ct, 5)
-    else:
-        st.info("Log real entries to track weekly goals.")
+    detox_ct = sum(1 for e in last7_r if e.get("detox_days", 0) > 0)
+    low_conf = sum(1 for e in last7_r if e.get("conflicts", 10) <= 1)
+    happy_ct = sum(1 for e in last7_r if e.get("dominant_emotion") == "Happy")
+    green_ct = sum(1 for e in last7_r if e.get("risk_label") == "low_risk")
+    ex_week  = sum(1 for e in last7_r if e.get("exercise_days", 0) >= 3)
+
+    def week_row(icon, label, current, target, note=""):
+        pct  = min(1.0, current / max(target, 0.01))
+        done = pct >= 1.0
+        col1, col2 = st.columns([4, 1])
+        col1.markdown(f"**{icon} {label}**{(' — ' + note) if note else ''}")
+        col2.markdown(f"<div style='text-align:right;color:{'#34D399' if done else '#6B7A99'};font-weight:700'>{'✅' if done else '⏳'} {current}/{target}</div>", unsafe_allow_html=True)
+        st.progress(pct)
+
+    week_row("🌿", "Detox Days",         detox_ct, 4,  "4 days off social media")
+    week_row("🔕", "Low Conflict Days",  low_conf, 5,  "≤1 conflict per day")
+    week_row("😊", "Happy Emotion Days", happy_ct, 5,  "log Happy 5 days")
+    week_row("🟢", "Green Risk Days",    green_ct, 5,  "Low Risk tier 5 days")
+    week_row("🏃", "Active Days",        ex_week,  5,  "exercised ≥3 days/wk")
 
     st.divider()
-    st.markdown("#### Why these targets?")
-    st.markdown("""<div class="explain-box">
-<b>1–4 hrs social media/day:</b> Happiness index consistently exceeds stress in this range (DF3 + DF2 validated).<br/>
-<b>4–6 detox days/week:</b> Peak happiness index in our DF3 analysis (n=500).<br/>
-<b>7–9 hrs sleep:</b> Strongest single happiness predictor across all 6 datasets. r=−0.76 with daily screen time (DF3).<br/>
-<b>3–5 hrs study:</b> Study hours dominate exam prediction (r=+0.825, DF6). Students at 5+ hrs averaged 90.8 vs 47.5 for under 2 hrs.
+
+    # ── Data-backed explanations always visible ────────────────────────────────
+    st.markdown("#### 📊 Why these targets? *(from our midterm data)*")
+    targets = [
+        ("📵", "Social media 1–4 hrs/day",
+         "Happiness index consistently exceeds stress in this range (DF3 + DF2). Stress overtakes happiness at ~6 hrs."),
+        ("🌿", "4–6 detox days/month",
+         "Peak happiness index occurred at 4–6 days without social media (DF3, n=500). Even 1–2 days helps."),
+        ("💤", "7–9 hrs sleep",
+         "Strongest single happiness predictor across all 6 datasets. r=−0.76 with daily screen time (DF3)."),
+        ("📚", "3–5 hrs study/day",
+         "Study hours dominate exam prediction (r=+0.825, DF6). Students at 5+ hrs averaged 90.8 vs 47.5 for under 2 hrs."),
+        ("😊", "Positive emotional state",
+         "DF5: users with boredom/anxiety as dominant emotions had the highest median screen time — a self-reinforcing loop."),
+        ("🟢", "Low Risk tier",
+         "Composite of usage, sleep, conflicts, and platform from the Random Forest model trained on 5,700+ students (DF1+DF2)."),
+    ]
+    for icon, title, text in targets:
+        st.markdown(f"""<div style="background:#111827;border-left:3px solid #34D399;
+border-radius:0 10px 10px 0;padding:10px 14px;margin:6px 0;font-size:.85rem;color:#94A3B8;line-height:1.6">
+<b style="color:#F0F4FF">{icon} {title}</b><br/>{text}
 </div>""", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -905,33 +955,73 @@ with TAB_AWARDS:
     earned        = check_awards(real_h_awards)
 
     AWARD_DEFS = [
-        ("🌿","detox_starter", "Detox Starter",    "Record any detox day"),
-        ("📚","study_hero",    "Study Hero",        "Study 4+ hours in a single day"),
-        ("📵","low_screen",    "Screen Minimalist", "Under 2 hrs social media 7 days in a row"),
-        ("💤","sleep_champ",   "Sleep Champion",    "8+ hours sleep 5 consecutive days"),
-        ("⭐","wellness_week", "Wellness Week",     "Low risk score 7 consecutive days"),
-        ("⚖️","balanced_life","Balanced Life",     "All daily targets met 3 days in a row"),
-        ("🧘","no_fomo",       "FOMO Fighter",      "Log 'Happy' emotion 5 days in a row"),
-        ("🔥","streak_7",      "7-Day Streak",      "Log data 7 consecutive days"),
+        # (icon, key, label, description, how_to_unlock)
+        ("🌿","detox_starter", "Detox Starter",
+         "Took your first break from social media.",
+         "Log any day with Detox Days > 0."),
+        ("📚","study_hero", "Study Hero",
+         "Dedicated a full day to learning — 4+ study hours.",
+         "Log a single day with 4+ study hours."),
+        ("📵","low_screen", "Screen Minimalist",
+         "Kept social media under 2 hrs for 7 days straight.",
+         "Log 7 consecutive days with social media < 2 hrs."),
+        ("💤","sleep_champ", "Sleep Champion",
+         "Prioritised rest — 8+ hrs sleep for 5 days running.",
+         "Log 5 consecutive days with 8+ hours sleep."),
+        ("⭐","wellness_week", "Wellness Week",
+         "Maintained Low Risk mental health for a full week.",
+         "Log 7 consecutive days in the Low Risk tier."),
+        ("⚖️","balanced_life", "Balanced Life",
+         "Hit all daily targets (sleep, study, screen time) 3 days in a row.",
+         "3 consecutive days: social < 4h, study ≥ 3h, sleep ≥ 7h."),
+        ("🧘","no_fomo", "FOMO Fighter",
+         "Logged a Happy emotional state 5 days in a row.",
+         "Log 'Happy' as dominant emotion 5 consecutive days."),
+        ("🔥","streak_7", "7-Day Streak",
+         "Built a daily logging habit — 7 days in a row.",
+         "Log entries on 7 consecutive calendar days."),
+        ("😴","sleep_starter", "Sleep Starter",
+         "Got a good night's rest — 7+ hours sleep.",
+         "Log any single day with 7+ hours of sleep."),
+        ("📱","first_log", "First Step",
+         "Started your wellness journey by logging day 1.",
+         "Log your very first entry."),
+        ("🏃","active_week", "Active Week",
+         "Exercised at least 3 days in a single week.",
+         "Log a day where exercise_days ≥ 3."),
+        ("💬","conflict_free", "Conflict Free",
+         "Had a completely conflict-free day on social media.",
+         "Log a day with 0 social media conflicts."),
     ]
 
-    st.subheader(f"Achievement Badges — {len(earned)}/{len(AWARD_DEFS)} earned")
+    st.subheader("🏆 Achievement Badges")
+    st.caption(f"**{len(earned)}/{len(AWARD_DEFS)} earned** — based on your real entries only (not demo data).")
     st.progress(len(earned) / len(AWARD_DEFS) if AWARD_DEFS else 0)
-    st.caption("Based on your real entries only (not demo data).")
 
-    cols = st.columns(2)
-    for i, (icon, key, label, desc) in enumerate(AWARD_DEFS):
-        is_earned = key in earned
-        with cols[i % 2]:
-            bg      = "#1C2537" if is_earned else "#111827"
-            opacity = "1"       if is_earned else "0.4"
-            c_label = "#34D399" if is_earned else "#6B7A99"
-            tick    = "✅ EARNED" if is_earned else "🔒 Locked"
-            st.markdown(f"""
-<div style="background:{bg};border:1px solid #2A3550;border-radius:12px;
-  padding:12px 14px;margin-bottom:10px;opacity:{opacity}">
-  <span style="font-size:1.3rem">{icon}</span>
-  <b style="color:{c_label};margin-left:8px">{label}</b>
-  <div style="color:#6B7A99;font-size:.78rem;margin-top:4px">{desc}</div>
-  <div style="font-size:.72rem;margin-top:6px;color:{c_label}">{tick}</div>
-</div>""", unsafe_allow_html=True)
+    if not real_h_awards:
+        st.info("👈 Start logging real entries to unlock badges. All badges are shown below so you know what to aim for!")
+    else:
+        earned_count = len(earned)
+        st.success(f"🎉 You've earned **{earned_count} badge{'s' if earned_count != 1 else ''}** so far! Keep logging to unlock more.")
+
+    st.divider()
+
+    # Show earned first, then locked
+    earned_defs  = [(i,k,l,d,h) for i,k,l,d,h in AWARD_DEFS if k in earned]
+    locked_defs  = [(i,k,l,d,h) for i,k,l,d,h in AWARD_DEFS if k not in earned]
+
+    if earned_defs:
+        st.markdown("#### ✅ Earned")
+        cols = st.columns(2)
+        for idx, (icon, key, label, desc, how) in enumerate(earned_defs):
+            with cols[idx % 2]:
+                st.success(f"**{icon} {label}**")
+                st.caption(desc)
+
+    st.markdown("#### 🔒 Locked — here's how to unlock")
+    cols2 = st.columns(2)
+    for idx, (icon, key, label, desc, how) in enumerate(locked_defs):
+        with cols2[idx % 2]:
+            with st.expander(f"{icon} {label}"):
+                st.markdown(f"*{desc}*")
+                st.markdown(f"**How to unlock:** {how}")
