@@ -175,7 +175,10 @@ def predict_exam(study_hrs, social_hrs, sleep_hrs, mental_rating):
                      columns=["study_hours_per_day","social_media_hours",
                                "sleep_hours","mental_health_rating"])
     X_scaled = exam_scaler.transform(X)
-    return exam_model.predict(X_scaled)[0]   # High / Medium / Low
+    # FIXED — works on all versions, identical results:
+    scores = exam_model.decision_function(X_scaled)   # raw linear scores per class
+    idx    = int(np.argmax(scores, axis=1)[0])         # pick highest-scoring class
+    return exam_model.classes_[idx]                    # "High" / "Medium" / "Low"
 
 # ── Award helper streaks ──────────────────────────────────────────────────────
 def _max_streak_num(entries_sorted, key, threshold, direction="high"):
