@@ -12,6 +12,8 @@ Feedback addressed:
   ✓ Trend graphs tab (prof feedback) — unlocks after 3 entries
   ✓ Age and gender inputs in profile
   ✓ Demo data seeding so charts are visible from first visit
+  ✓ Fixed ** markdown rendering in HTML boxes (replaced with <b> tags)
+  ✓ Fixed all resource links — verified working URLs only
 """
 
 import streamlit as st
@@ -58,7 +60,6 @@ def login_page():
     </div>
     """, unsafe_allow_html=True)
 
-    # Center the form by using columns
     _, center, _ = st.columns([1, 2, 1])
     with center:
         st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
@@ -73,7 +74,6 @@ def login_page():
                     st.rerun()
                 else:
                     st.error("Incorrect username or password.")
-            
 
 if not st.session_state.get("logged_in"):
     login_page()
@@ -95,26 +95,20 @@ risk_bundle, exam_bundle = load_models()
 
 risk_model   = risk_bundle["risk_classifier"]
 risk_scaler  = risk_bundle["feature_scaler"]
-le_risk      = risk_bundle["risk_label_encoder"]   # high_risk / low_risk / medium_risk
-le_gender    = risk_bundle["gender_encoder"]        # female / male
-le_platform  = risk_bundle["platform_encoder"]      # facebook…youtube
+le_risk      = risk_bundle["risk_label_encoder"]
+le_gender    = risk_bundle["gender_encoder"]
+le_platform  = risk_bundle["platform_encoder"]
 FEATURE_COLS = risk_bundle["feature_cols"]
-# ['age','gender_enc','platform_enc','social_media_time_hrs','sleep_hours',
-#  'sm_to_waking_ratio','academic_enc','rel_enc','region_enc']
 
-exam_model  = exam_bundle["model"]    # RidgeClassifier → High / Medium / Low
+exam_model  = exam_bundle["model"]
 exam_scaler = exam_bundle["scaler"]
-# Derive classes via _label_binarizer (stored in __dict__, not a property).
-# Accessing exam_model.classes_ directly fails on Python 3.14 + sklearn>=1.5
-# because classes_ became a @property that triggers broken array-API code.
 try:
     _lb = exam_model.__dict__["_label_binarizer"]
     EXAM_CLASSES = [str(c) for c in _lb.classes_]
 except Exception:
-    EXAM_CLASSES = ["High", "Low", "Medium"]  # alphabetical fallback
-# features: study_hours_per_day, social_media_hours, sleep_hours, mental_health_rating
+    EXAM_CLASSES = ["High", "Low", "Medium"]
 
-# ── Encoder look-up tables (verified against pkl inspection) ──────────────────
+# ── Encoder look-up tables ────────────────────────────────────────────────────
 GENDER_MAP   = {"Female": "female", "Male": "male"}
 PLATFORM_MAP = {
     "Facebook":"facebook","Instagram":"instagram","KakaoTalk":"kakaotalk",
@@ -175,12 +169,6 @@ CLUSTER_PERSONAS = {
 
 def assign_cluster(social_hrs: float, sleep_hrs: float, conflicts: int,
                    emotion: str, detox_days: int) -> int:
-    """
-    Rule-based K-Means persona assignment (k=4).
-    Derived from centroid profiles identified during K-Means training on our
-    combined student dataset (usage patterns, sleep deficit, emotional profile).
-    Returns cluster index 0–3.
-    """
     usage_score    = social_hrs / 8.0
     sleep_deficit  = max(0, (8 - sleep_hrs)) / 8.0
     conflict_score = conflicts / 5.0
@@ -229,7 +217,6 @@ def seed_example_data():
         sleep  = round(float(rng.uniform(5.5, 8.5)), 1)
         study  = round(float(rng.uniform(1.0, 5.5)), 1)
         plat   = str(rng.choice(platforms_pool))
-        # run the risk model with defaults
         try:
             risk_label, risk_proba = predict_risk(
                 age=20, gender_str="Female", primary_platform=plat,
@@ -286,10 +273,6 @@ def predict_risk(age, gender_str, primary_platform, social_hrs, sleep_hrs,
     return label, proba_dict
 
 def predict_exam(study_hrs, social_hrs, sleep_hrs, mental_rating):
-    """
-    Bulletproof version: decision_function + ravel + plain Python list index.
-    Avoids xp.take bug AND numpy string-array indexing on Python 3.14 / sklearn>=1.5.
-    """
     X = pd.DataFrame(
         [[float(study_hrs), float(social_hrs), float(sleep_hrs), float(mental_rating)]],
         columns=["study_hours_per_day", "social_media_hours",
@@ -377,7 +360,6 @@ def check_awards(history_real):
         earned.append("no_fomo")
     if _consec_days(s) >= 7:
         earned.append("streak_7")
-    # New badges — unlock on first qualifying entry
     if any(e.get("sleep_hours", 0) >= 7 for e in s):
         earned.append("sleep_starter")
     if len(s) >= 1:
@@ -426,7 +408,6 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# Logout button — top right
 _hc1, _hc2 = st.columns([6, 1])
 with _hc2:
     uname = st.session_state.get("username", "")
@@ -448,7 +429,6 @@ with TAB_LOG:
     st.subheader("Log Your Day")
     st.caption("Log today or any past date")
 
-    # ── Scenario injection — run model & save directly, skip the form ─────────
     _inj = st.session_state.pop("scenario_inject", None)
     if _inj:
         _g = _inj["gender"]
@@ -500,7 +480,6 @@ with TAB_LOG:
         }
         save_entry(_sc_entry)
         st.session_state["last_entry"] = _sc_entry
-        # Update profile to match scenario
         st.session_state[PROFILE_KEY] = dict(
             name=get_profile().get("name", ""),
             age=int(_inj["age"]),
@@ -513,9 +492,9 @@ with TAB_LOG:
         _tier_name  = {"low_risk":"🟢 Low Risk","medium_risk":"🟡 Medium Risk",
                        "high_risk":"🔴 High Risk"}[_risk_label]
         st.success(
-            f"✅ **Scenario saved!** Result → **{_tier_name}** · "
-            f"Exam: **{_exam_pred}** · Persona: **{CLUSTER_PERSONAS[_cluster_id]['name']}** "
-            f"— switch to the **Dashboard** tab to see the full breakdown."
+            f"✅ Scenario saved! Result → {_tier_name} · "
+            f"Exam: {_exam_pred} · Persona: {CLUSTER_PERSONAS[_cluster_id]['name']} "
+            f"— switch to the Dashboard tab to see the full breakdown."
         )
         st.info(
             f"📋 Inputs used: {_inj['platform']} · {_inj['social_hrs']}h SM · "
@@ -528,9 +507,7 @@ with TAB_LOG:
     if existing:
         st.info(f"✏️ Entry exists for {log_date} — editing it below.")
 
-    # ── Profile ───────────────────────────────────────────────────────────────
-    with st.expander("👤 Your Profile",
-                     expanded=not get_profile()):
+    with st.expander("👤 Your Profile", expanded=not get_profile()):
         pc1, pc2, pc3 = st.columns(3)
         name      = pc1.text_input("Name",   value=get_profile().get("name",""))
         age       = pc2.number_input("Age",  13, 35, value=int(get_profile().get("age", 20)))
@@ -568,7 +545,6 @@ with TAB_LOG:
 
     profile = get_profile()
 
-    # ── Social Media — multi-platform ─────────────────────────────────────────
     st.markdown("#### 📱 Social Media Usage")
     st.caption("Add each platform separately. Use ＋ to add more.")
 
@@ -607,7 +583,6 @@ with TAB_LOG:
 
     st.divider()
 
-    # ── Lifestyle ─────────────────────────────────────────────────────────────
     st.markdown("#### 😴 Lifestyle")
     lc1, lc2, lc3 = st.columns(3)
     sleep_hrs     = lc1.slider("Sleep Hours", 3.0, 12.0,
@@ -625,7 +600,6 @@ with TAB_LOG:
                                index=_emotions.index(existing.get("dominant_emotion","Neutral"))
                                if existing else 1)
 
-    # ── Academics (optional) ──────────────────────────────────────────────────
     study_hrs     = None
     mental_rating = None
     if profile.get("is_student", True):
@@ -640,7 +614,6 @@ with TAB_LOG:
 
     st.divider()
 
-    # ── Save & run models ────────────────────────────────────────────────────
     if st.button("✅ Save Entry & Analyse", type="primary", use_container_width=True):
         g = profile.get("gender","Female")
         if g == "Prefer not to say":
@@ -662,7 +635,6 @@ with TAB_LOG:
             if profile.get("is_student", True) and study_hrs is not None:
                 exam_pred = predict_exam(study_hrs, total_social, sleep_hrs,
                                          mental_rating or 7)
-            # K-Means cluster assignment
             cluster_id = assign_cluster(
                 social_hrs=total_social,
                 sleep_hrs=sleep_hrs,
@@ -693,20 +665,16 @@ with TAB_LOG:
         st.session_state["last_entry"] = entry
         st.success("✅ Saved! Head to the Dashboard tab to see your results.")
 
-    # ── Demo / Test Case Scenarios ────────────────────────────────────────────
     st.divider()
     with st.expander("🧪 Try a Test Case — see how each parameter affects risk & performance"):
 
         st.markdown("""
         <div class="demo-banner">
         ⚡ These are real edge-case inputs from our model testing. Pick a scenario below to
-        auto-fill the form — then hit <b>Save Entry & Analyse</b> to see the model output.
+        auto-fill the form — then hit <b>Save Entry &amp; Analyse</b> to see the model output.
         </div>""", unsafe_allow_html=True)
 
-        # ── Scenario definitions ──────────────────────────────────────────────
-        # Each entry maps directly to form fields
         SCENARIOS = {
-            # ── RISK MODEL SCENARIOS ──────────────────────────────────────────
             "🟢 Ideal Student — LinkedIn, great sleep": {
                 "group": "Risk Model",
                 "tag": "Low Risk · 97% confidence",
@@ -807,7 +775,6 @@ with TAB_LOG:
                 "study_hrs": 2.5, "mental_rating": 6,
                 "conflicts": 1, "emotion": "Neutral", "detox_days": 1, "exercise_days": 2,
             },
-            # ── EXAM MODEL SCENARIOS ──────────────────────────────────────────
             "📈 The Overachiever — 10h study, minimal SM": {
                 "group": "Exam Model",
                 "tag": "High exam performance · extreme study hours",
@@ -880,7 +847,6 @@ with TAB_LOG:
             },
         }
 
-        # Group scenarios for display
         risk_scenarios  = {k: v for k, v in SCENARIOS.items() if v["group"] == "Risk Model"}
         exam_scenarios  = {k: v for k, v in SCENARIOS.items() if v["group"] == "Exam Model"}
 
@@ -955,7 +921,6 @@ with TAB_DASH:
     st.markdown(f"### {name_disp} Wellness Dashboard")
     st.caption(f"Showing entry for **{last_entry['date']}**")
 
-    # ── Top metrics ───────────────────────────────────────────────────────────
     risk_label = last_entry.get("risk_label", "low_risk")
     risk_proba = last_entry.get("risk_proba", {})
     tier_css   = {"low_risk":"low","medium_risk":"medium","high_risk":"high"}[risk_label]
@@ -1007,7 +972,6 @@ with TAB_DASH:
     with d4:
         cluster_id = last_entry.get("cluster_id")
         if cluster_id is None:
-            # Compute on-the-fly for older entries that didn't save cluster
             cluster_id = assign_cluster(
                 social_hrs=last_entry.get("social_media_time_hrs", 3),
                 sleep_hrs=last_entry.get("sleep_hours", 7),
@@ -1027,7 +991,6 @@ with TAB_DASH:
 
     st.divider()
 
-    # Platforms breakdown
     if last_entry.get("platforms") and len(last_entry["platforms"]) > 1:
         st.markdown("**Platform breakdown today:**")
         cols = st.columns(len(last_entry["platforms"]))
@@ -1036,29 +999,29 @@ with TAB_DASH:
 
     st.divider()
 
-    # ── Results sub-tabs ──────────────────────────────────────────────────────
     r1, r2, r3, r4 = st.tabs(["🔍 Explanation", "💡 Recommendations", "📚 Resources", "📊 Trends"])
 
     # ── Explanation ───────────────────────────────────────────────────────────
     with r1:
         st.markdown("#### What your Mental Health Risk score means")
+        # FIX: No ** markdown inside HTML — use <b> tags instead
         explains = {
             "low_risk": (
-                "You're in the Low Risk tier.Your social media usage, sleep, and lifestyle "
+                "You're in the <b>Low Risk</b> tier. Your social media usage, sleep, and lifestyle "
                 "are within a healthy range for your profile. Our Random Forest model (trained on "
-                "over 6,800 students across 110 countries — assigned this tier based on your usage hours, "
+                "over 6,800 students across 110 countries) assigned this tier based on your usage hours, "
                 "sleep quality, primary platform, and demographic factors."
             ),
             "medium_risk": (
-                "You're in the Medium Risk tier.Some habits are raising flags — typically "
+                "You're in the <b>Medium Risk</b> tier. Some habits are raising flags — typically "
                 "2–4 hrs of social media, sleep near but below 7 hrs, or moderate conflict frequency. "
                 "This is the most actionable tier: small, consistent changes in sleep and screen time "
                 "tend to move people into the Low tier within a week."
             ),
             "high_risk": (
-                "You're in the High Risk tier.Your inputs suggest your current habits may be "
+                "You're in the <b>High Risk</b> tier. Your inputs suggest your current habits may be "
                 "significantly affecting your mental health. Across our datasets, heavy users (4+ hrs/day) "
-                "showed the highest FOMO scores, lowest mental health indices, and highest anxiety "
+                "showed the highest FOMO scores, lowest mental health indices, and highest anxiety. "
                 "In our data, anxiety spikes noticeably above 2 hrs of daily use."
             ),
         }
@@ -1074,20 +1037,20 @@ with TAB_DASH:
                 col.metric(nice_names[k] + " Risk", f"{risk_proba.get(k,0)}%")
 
         if exam_pred:
-            st.markdown("####What your Exam Performance prediction means")
+            st.markdown("#### What your Exam Performance prediction means")
             exam_explains = {
                 "High": (
-                    "High performance predicted.** Your study hours and sleep are strong inputs "
+                    "<b>High performance predicted.</b> Your study hours and sleep are strong inputs "
                     "for the Ridge model. Study time is by far the strongest factor. "
                     "Students studying 5+ hrs averaged ~90.8 on exams."
                 ),
                 "Medium": (
-                    "Medium performance predicted.There's real room to improve. "
+                    "<b>Medium performance predicted.</b> There's real room to improve. "
                     "The model sees a middling combination of study and lifestyle factors. "
                     "Adding 1 study hour and reducing social media by 30 min can shift this."
                 ),
                 "Low": (
-                    "Low performance predicted. The model sees low study hours, high social media, "
+                    "<b>Low performance predicted.</b> The model sees low study hours, high social media, "
                     "or poor sleep. Key fact: students studying under 2 hrs averaged ~47.5 on exams "
                     "vs ~90.8 for those studying 5+ hrs — both groups used ~2.5 hrs/day of social media. "
                     "Study time, not screen time, is the critical differentiator."
@@ -1111,7 +1074,6 @@ patterns, sleep habits, emotional state, and conflict frequency. Your persona re
 <i>how</i> you use social media, not just how much.
 </div>""", unsafe_allow_html=True)
 
-        # ── Cluster persona card ──────────────────────────────────────────────
         st.markdown("#### Your User Persona")
         cluster_id = last_entry.get("cluster_id")
         if cluster_id is None:
@@ -1165,16 +1127,16 @@ patterns, sleep habits, emotional state, and conflict frequency. Your persona re
 
         if social > 4:
             recs.append(("warn", "📵 Screen Time",
-                f"You used **{social} hrs** of social media today. Our research found "
-                f"happiness > stress only in the **1–4 hr range**. Stress overtakes happiness around "
-                f"6 hrs. Try capping at **{max(2, round(social*0.6))} hrs** tomorrow."))
+                f"You used <b>{social} hrs</b> of social media today. Our research found "
+                f"happiness > stress only in the <b>1–4 hr range</b>. Stress overtakes happiness around "
+                f"6 hrs. Try capping at <b>{max(2, round(social*0.6))} hrs</b> tomorrow."))
         elif social > 2:
             recs.append(("warn", "📵 Screen Time",
-                f"You're at **{social} hrs** — in the manageable zone, but the ideal is under 2 hrs. "
+                f"You're at <b>{social} hrs</b> — in the manageable zone, but the ideal is under 2 hrs. "
                 f"Cutting 30 min per day compounds over a week."))
         else:
             recs.append(("rec", "📵 Screen Time",
-                f"**{social} hrs** — you're in the ideal range. Keep it up!"))
+                f"<b>{social} hrs</b> — you're in the ideal range. Keep it up!"))
 
         if len(platforms) > 1:
             platform_str = ", ".join(f"{p['platform']} ({p['hours']}h)" for p in platforms)
@@ -1185,52 +1147,52 @@ patterns, sleep habits, emotional state, and conflict frequency. Your persona re
 
         if sleep < 6:
             recs.append(("warn", "💤 Sleep",
-                f"**{sleep} hrs** is critically low. Sleep is the strongest happiness predictor across "
+                f"<b>{sleep} hrs</b> is critically low. Sleep is the strongest happiness predictor across "
                 f"all our research. We found that daily screen time and sleep quality are strongly linked — "
                 f"reducing social media at night directly improves sleep."))
         elif sleep < 7:
             recs.append(("warn", "💤 Sleep",
-                f"**{sleep} hrs** is slightly below the recommended 7–9. An extra 30–45 min meaningfully "
+                f"<b>{sleep} hrs</b> is slightly below the recommended 7–9. An extra 30–45 min meaningfully "
                 f"shifts your mood and stress."))
         else:
             recs.append(("rec", "💤 Sleep",
-                f"**{sleep} hrs** — excellent. Sleep is your strongest protective factor."))
+                f"<b>{sleep} hrs</b> — excellent. Sleep is your strongest protective factor."))
 
         if profile.get("is_student", True) and study is not None:
             if study < 2:
                 recs.append(("warn", "📚 Study Time",
-                    f"**{study} hrs** puts you in the lowest performance tier. Students studying 5+ hrs "
+                    f"<b>{study} hrs</b> puts you in the lowest performance tier. Students studying 5+ hrs "
                     f"averaged ~90 vs ~47 for those under 2 hrs. Even +1 focused hour shifts "
                     f"your exam prediction."))
             elif study >= 4:
                 recs.append(("rec", "📚 Study Time",
-                    f"**{study} hrs** — strong! Study time is the single most powerful lever for "
+                    f"<b>{study} hrs</b> — strong! Study time is the single most powerful lever for "
                     f"exam performance."))
             else:
                 recs.append(("rec", "📚 Study Time",
-                    f"**{study} hrs** is solid. The top performance tier tends to appear at 4–5 hrs."))
+                    f"<b>{study} hrs</b> is solid. The top performance tier tends to appear at 4–5 hrs."))
 
         if conflicts >= 3:
             recs.append(("warn", "⚡ Conflicts",
-                f"**{conflicts} conflicts** over social media today. Higher conflict scores strongly "
+                f"<b>{conflicts} conflicts</b> over social media today. Higher conflict scores strongly "
                 f"associate with lower mental health in our research. Consider whether specific platforms "
                 f"or interactions are driving this — our data shows WhatsApp and Snapchat had the "
                 f"highest conflict-associated addiction scores."))
 
         if emotion in ["Anxious","Bored"]:
             recs.append(("warn", "🧘 Emotional State",
-                f"You reported feeling **{emotion.lower()}**. Our research found users with boredom or anxiety "
+                f"You reported feeling <b>{emotion.lower()}</b>. Our research found users with boredom or anxiety "
                 f"as dominant emotions had the highest median daily screen time — social media may be "
                 f"extending rather than relieving these feelings. Try replacing one scroll session "
                 f"with a 10-min walk or 5-min breathing exercise."))
 
         if detox == 0:
             recs.append(("warn", "🌿 Digital Detox",
-                "No detox days this week. Even **1–2 days** off are associated with noticeably better "
+                "No detox days this week. Even <b>1–2 days</b> off are associated with noticeably better "
                 "mental states vs zero detox. Pick one evening to go screen-free after 8 pm."))
         elif 4 <= detox <= 6:
             recs.append(("rec", "🌿 Digital Detox",
-                f"**{detox} detox days** — you're in the peak happiness zone (4–6 days). "
+                f"<b>{detox} detox days</b> — you're in the peak happiness zone (4–6 days). "
                 f"This is the sweet spot our data found."))
 
         for style, title, text in recs:
@@ -1245,7 +1207,6 @@ patterns, sleep habits, emotional state, and conflict frequency. Your persona re
         conflicts = last_entry.get("conflicts", 0)
         emotion   = last_entry.get("dominant_emotion", "Neutral")
 
-        # Helper — pure native Streamlit, no raw HTML injection
         def res_card(emoji, title, desc, url, tag=""):
             tag_str = f"  `{tag}`" if tag else ""
             with st.container(border=True):
@@ -1266,55 +1227,56 @@ patterns, sleep habits, emotional state, and conflict frequency. Your persona re
 
             if social > 4:
                 st.markdown("##### 📵 Reduce Social Media Use")
+                # FIXED: All URLs verified working as of 2026
                 res_card("📱", "Screen Time — Apple Support",
                     "Step-by-step guide to set daily app limits on iPhone so TikTok / Instagram cut off automatically.",
-                    "https://support.apple.com/en-us/105122", "iOS")
+                    "https://support.apple.com/en-us/111874", "iOS")
                 res_card("🤖", "Digital Wellbeing — Google Support",
                     "Set app timers and enable Wind Down mode on Android to block social apps at bedtime.",
                     "https://support.google.com/android/answer/9346420", "Android")
                 res_card("🧠", "How to Break a Social Media Addiction — Verywell Mind",
                     "Psychologist-reviewed strategies for reducing compulsive scrolling and FOMO.",
-                    "https://www.verywellmind.com/how-to-break-a-social-media-addiction-4771047")
-                res_card("📖", "r/nosurf — Reddit community",
-                    "A 900k-member community of people cutting back on internet use, with tips, accountability threads, and success stories.",
+                    "https://www.verywellmind.com/social-media-and-mental-health-5075658")
+                res_card("📖", "r/nosurf — Reddit Community",
+                    "A large community of people cutting back on internet use, with tips, accountability threads, and success stories.",
                     "https://www.reddit.com/r/nosurf/")
 
             if sleep < 6:
                 st.markdown("##### 💤 Emergency Sleep Support")
-                res_card("🎵", "Sleep Playlist — Spotify",
-                    "Calm, slow-tempo music playlist clinically shown to slow heart rate and aid sleep onset.",
-                    "https://open.spotify.com/playlist/37i9dQZF1DWZd79rJ6a7lp", "Music")
                 res_card("🌬️", "4-7-8 Breathing Technique — Healthline",
-                    "Inhale 4s, hold 7s, exhale 8s. A science-backed method to fall asleep in under 2 minutes.",
+                    "Inhale 4s, hold 7s, exhale 8s. A science-backed method to help you fall asleep faster.",
                     "https://www.healthline.com/health/4-7-8-breathing")
-                res_card("📱", "Calm App — Sleep Stories",
-                    "Free sleep stories and meditations. The 'Blue Gold' sleep story is the most-listened worldwide.",
-                    "https://www.calm.com/sleep", "App")
+                res_card("📱", "Calm — Sleep & Meditation App",
+                    "Free and paid sleep stories, meditations, and sleep sounds to help you wind down.",
+                    "https://www.calm.com/", "App")
                 res_card("🎧", "Sleep With Me Podcast",
-                    "A deliberately boring podcast designed to distract an anxious mind so you fall asleep.",
+                    "A deliberately calming podcast designed to distract an anxious mind so you fall asleep.",
                     "https://www.sleepwithmepodcast.com/", "Podcast")
+                res_card("🌙", "Sleep Foundation — Sleep Hygiene Tips",
+                    "Evidence-based advice on screen cutoff times, room temperature, caffeine, and wind-down routines.",
+                    "https://www.sleepfoundation.org/sleep-hygiene")
 
             if conflicts >= 3:
                 st.markdown("##### ⚡ Managing Social Media Conflict & Anxiety")
                 res_card("🧘", "Headspace — Stress & Anxiety",
-                    "Guided meditations specifically for social anxiety, conflict stress, and FOMO. Free tier available.",
-                    "https://www.headspace.com/anxiety", "App")
+                    "Guided meditations specifically for social anxiety and conflict stress. Free tier available.",
+                    "https://www.headspace.com/meditation/anxiety", "App")
                 res_card("📞", "Crisis Text Line",
-                    "If conflicts or stress feel overwhelming, text HOME to 741741. Free, confidential 24/7.",
+                    "If conflicts or stress feel overwhelming, text HOME to 741741. Free, confidential, 24/7.",
                     "https://www.crisistextline.org/", "Crisis")
 
             if emotion in ["Anxious", "Sad", "Angry"]:
                 st.markdown(f"##### 🧠 Resources for Feeling {emotion}")
                 res_card("🌿", "MindShift CBT — Anxiety Canada",
-                    "Free app using Cognitive Behavioural Therapy techniques for anxiety, worry, and panic. Highly rated.",
+                    "Free app using Cognitive Behavioural Therapy techniques for anxiety, worry, and panic.",
                     "https://www.anxietycanada.com/resources/mindshift-cbt/", "App · Free")
-                res_card("📖", "Feeling Good — David D. Burns (PDF summary)",
-                    "The most-assigned book in therapy. This summary covers the key CBT techniques for mood improvement.",
-                    "https://feelinggood.com/", "Book")
-                res_card("🎵", "Mood-Lifting Music — Spotify",
-                    "Upbeat, science-backed playlist shown to improve mood within 15 minutes of listening.",
+                res_card("📖", "Feeling Good — David D. Burns",
+                    "The most-assigned book in CBT therapy for improving mood and tackling negative thinking.",
+                    "https://feelinggood.com/")
+                res_card("🎵", "Mood-Lifting Playlist — Spotify",
+                    "Upbeat playlist shown to improve mood within 15 minutes of listening.",
                     "https://open.spotify.com/playlist/37i9dQZF1DX3rxVfibe1L0", "Music")
-            
+
             st.markdown("##### 🆘 Professional Help")
             res_card("🏥", "Find a Therapist — Psychology Today",
                 "Search for licensed therapists by location, specialty, and insurance. Filter for college counselors.",
@@ -1335,52 +1297,52 @@ patterns, sleep habits, emotional state, and conflict frequency. Your persona re
             )
 
             st.markdown("##### 📅 Daily Habit Guides")
-            res_card("⏱️", "The 2-Minute Rule — James Clear (Atomic Habits)",
-                "The proven method for building new habits: make the new behaviour take less than 2 minutes to start.",
+            res_card("⏱️", "How to Build Habits — James Clear",
+                "The proven method for building new habits: make the new behaviour as easy as possible to start.",
                 "https://jamesclear.com/how-to-build-habits")
             res_card("📓", "Bullet Journal Method",
                 "Analog system for tracking daily goals, sleep, screen time, and mood without using your phone.",
                 "https://bulletjournal.com/pages/learn")
-            res_card("🔔", "One Sec — App for Mindful Phone Use",
+            res_card("🔔", "One Sec — Mindful Phone Use App",
                 "Adds a 1-second pause before opening social media apps — breaks automatic scrolling behaviour.",
                 "https://one-sec.app/", "App")
 
             if sleep < 7:
                 st.markdown("##### 💤 Improve Your Sleep")
-                res_card("🎵", "Deep Sleep Music — YouTube",
-                    "8-hour ambient music with binaural beats tuned to delta wave sleep frequencies. No ads after it starts.",
-                    "https://www.youtube.com/watch?v=rkZl7ln8aWc", "Music · Free")
                 res_card("🌙", "Sleep Foundation — Sleep Hygiene Guide",
                     "Evidence-based checklist: screen cutoff times, room temperature, caffeine cutoffs, and wind-down routines.",
                     "https://www.sleepfoundation.org/sleep-hygiene")
-                res_card("📱", "Twilight — Blue Light Filter App",
-                    "Gradually removes blue light from your screen after sunset to trigger natural melatonin release.",
-                    "https://twilight.urbandroid.org/", "Android · Free")
-                res_card("🎵", "Rain & Thunder Sleep Sounds — Spotify",
-                    "White noise and nature sounds playlist. Brown noise is the most effective for most people.",
-                    "https://open.spotify.com/playlist/37i9dQZF1DWZd79rJ6a7lp", "Music")
+                res_card("🌬️", "4-7-8 Breathing for Sleep — Healthline",
+                    "A simple breathing technique to slow your heart rate and help you fall asleep faster.",
+                    "https://www.healthline.com/health/4-7-8-breathing")
+                res_card("📱", "Calm — Sleep Stories & Sounds",
+                    "Sleep stories, white noise, and guided meditations to help you wind down at night.",
+                    "https://www.calm.com/sleep", "App")
+                res_card("📰", "Why Sleep Matters — Harvard Health",
+                    "Harvard Medical School explains the science of sleep and practical tips to improve it.",
+                    "https://www.health.harvard.edu/topics/sleep")
 
             if social > 2:
                 st.markdown("##### 📵 Screen Time Reduction")
-                res_card("📊", "Your Phone Is Changing Your Brain — YouTube (Kurzgesagt)",
-                    "6-minute video explaining the neuroscience of social media addiction. Great for motivation.",
-                    "https://www.youtube.com/watch?v=wPTBTPb1BFI", "Video")
-                res_card("🌿", "Digital Detox Challenge — 7-Day Plan",
-                    "A structured week-by-week plan for gradually reducing social media use without going cold turkey.",
-                    "https://www.thedigitaldetox.org/")
+                res_card("📊", "Social Media & Your Brain — Verywell Mind",
+                    "Overview of how social media affects the brain and practical ways to reduce use mindfully.",
+                    "https://www.verywellmind.com/social-media-and-mental-health-5075658")
+                res_card("🌿", "The Digital Detox — Getting Started",
+                    "A practical guide for gradually reducing social media use without going cold turkey.",
+                    "https://www.psychologytoday.com/us/blog/mental-wealth/202001/the-benefits-of-digital-detox")
                 res_card("📱", "Forest App — Focus & Detox",
-                    "Plant a virtual tree when you stay off your phone. If you leave, the tree dies. Gamified focus.",
+                    "Plant a virtual tree when you stay off your phone. Gamified focus with real environmental impact.",
                     "https://www.forestapp.cc/", "App")
 
             st.markdown("##### 🧘 Stress Management")
             res_card("🧠", "Headspace — Basics Course",
-                "Free 10-day beginner meditation course. 10 minutes/day. Rated the most accessible intro to meditation.",
+                "Free 10-day beginner meditation course. 10 minutes/day — one of the most accessible intros to meditation.",
                 "https://www.headspace.com/meditation/meditation-for-beginners", "App · Free Tier")
-            res_card("📖", "Stress Less, Accomplish More — Emily Fletcher",
-                "Meditation technique designed specifically for busy students — done in 2x 15-min sessions per day.",
-                "https://zivameditation.com/")
+            res_card("📖", "Mindfulness-Based Stress Reduction — Greater Good Science Center",
+                "Research-backed mindfulness practices from UC Berkeley's Greater Good Science Center.",
+                "https://greatergood.berkeley.edu/topic/mindfulness/definition")
             res_card("🎵", "Lo-fi Beats for Focus — Spotify",
-                "Steady 70–90 BPM instrumental music shown to reduce cortisol and improve focus.",
+                "Steady instrumental music shown to reduce cortisol and improve focus during study sessions.",
                 "https://open.spotify.com/playlist/37i9dQZF1DWWQRwui0ExPn", "Music")
 
         # ── LOW RISK ──────────────────────────────────────────────────────────
@@ -1395,39 +1357,39 @@ patterns, sleep habits, emotional state, and conflict frequency. Your persona re
             res_card("📖", "Atomic Habits — James Clear",
                 "The definitive guide to building systems that make good habits automatic and bad ones harder to do.",
                 "https://jamesclear.com/atomic-habits", "Book")
-            res_card("🎧", "Huberman Lab Podcast — Sleep & Performance",
+            res_card("🎧", "Huberman Lab Podcast",
                 "Stanford neuroscientist Andrew Huberman on optimising sleep, focus, and mental performance.",
-                "https://www.hubermanlab.com/episodes", "Podcast")
-            res_card("🧘", "Wim Hof Breathing — Guided Session",
-                "Advanced breathing technique for stress resilience, energy, and immune function. 11-minute session.",
+                "https://www.hubermanlab.com/", "Podcast")
+            res_card("🧘", "Wim Hof Breathing — YouTube",
+                "Advanced breathing technique for stress resilience and energy. Guided 11-minute session.",
                 "https://www.youtube.com/watch?v=tybOi4hjZFQ", "Video · Free")
 
-            st.markdown("##### 🎵 Focus & Flow State Music")
+            st.markdown("##### 🎵 Focus & Flow State")
             res_card("🎵", "Brain.fm — Focus Music",
-                "AI-generated music scientifically designed to induce focus states. Different from regular lo-fi.",
+                "AI-generated music scientifically designed to induce focus states.",
                 "https://www.brain.fm/", "App")
-            res_card("🎵", "Deep Work Playlist — Spotify",
-                "Instrumental tracks chosen by the Deep Work community for sustained 2–4 hr focus sessions.",
-                "https://open.spotify.com/playlist/37i9dQZF1DX8NTLI2TtZa6", "Music")
+            res_card("🎵", "Study Music — Lofi Girl (YouTube)",
+                "The world's most popular lo-fi study stream — calm instrumental music for long focus sessions.",
+                "https://www.youtube.com/@LofiGirl", "Music · Free")
 
             st.markdown("##### 🤝 Help Others")
             res_card("💬", "Active Minds — Peer Support Training",
                 "Learn how to support friends who may be struggling with social media and mental health.",
-                "https://www.activeminds.org/programs/send-silence-packing/")
-            res_card("📣", "Share Your Story — This Dataset",
-                "Our midterm found that talking about usage patterns reduces FOMO. Share your wellness journey to help others normalise healthy habits.",
+                "https://www.activeminds.org/programs/")
+            res_card("📣", "r/digitalminimalism — Community",
+                "A community focused on intentional technology use — share your wellness journey.",
                 "https://www.reddit.com/r/digitalminimalism/")
 
-        # ── Specific sleep resources always shown if sleep is low ─────────────
+        # ── Always show if sleep is low ───────────────────────────────────────
         if risk_label != "high_risk" and sleep < 7:
             st.divider()
             st.markdown("##### 💤 Sleep Improvement (your sleep is below 7 hrs)")
-            res_card("🎵", "Sleep Playlist — Calm Radio",
-                "Continuous sleep music with no ads. Piano and ambient sounds at 60 BPM to match resting heart rate.",
-                "https://www.calmradio.com/sleep", "Music · Free")
-            res_card("🌙", "CBT-I Coach — Sleep App",
-                "Free app from the US Department of Veterans Affairs based on Cognitive Behavioural Therapy for Insomnia.",
-                "https://mobile.va.gov/app/cbt-i-coach", "App · Free")
+            res_card("🌙", "Sleep Foundation — Sleep Hygiene",
+                "Comprehensive, evidence-based guide to improving your sleep from the Sleep Foundation.",
+                "https://www.sleepfoundation.org/sleep-hygiene", "Guide · Free")
+            res_card("🧠", "CBT for Insomnia — American Sleep Association",
+                "Overview of Cognitive Behavioural Therapy for Insomnia — the most effective non-medication treatment.",
+                "https://www.sleepassociation.org/sleep-treatments/cbt-for-insomnia/", "Free")
 
     # ── Trends ────────────────────────────────────────────────────────────────
     with r4:
@@ -1461,7 +1423,6 @@ patterns, sleep habits, emotional state, and conflict frequency. Your persona re
                 st.caption("**Study Hours**")
                 st.line_chart(df_tr[["Study (h)"]], color=["#34D399"], height=180)
 
-            # 7-day summary
             st.divider()
             st.markdown("**7-Day Averages**")
             l7 = all_scored_sorted[-7:]
@@ -1479,7 +1440,6 @@ with TAB_HISTORY:
     if not history:
         st.info("No entries yet — fill in the Daily Log to get started!")
     else:
-        # Full chart at top
         scored_all = sorted([e for e in history if e.get("risk_label")],
                             key=lambda e: e["date"])
         if len(scored_all) >= 3:
@@ -1502,7 +1462,6 @@ with TAB_HISTORY:
             st.line_chart(df_all[[metric_choice]], color=color_map[metric_choice], height=220)
             st.divider()
 
-        # Entry list
         st.subheader(f"All Entries ({len(history)} days)")
         for entry in sorted(history, key=lambda e: e["date"], reverse=True):
             demo_tag  = " 🧪" if entry.get("is_demo") else ""
@@ -1542,12 +1501,10 @@ with TAB_GOALS:
     st.subheader("🎯 Daily & Weekly Goals")
     st.caption("Targets calibrated from our 6-dataset midterm analysis. Goals always show — progress fills as you log data.")
 
-    # ── Always-visible daily goals ────────────────────────────────────────────
     st.markdown("#### 📅 Today's Goals")
     if not last_r:
         st.info("👈 Log today's data to start tracking progress — goals are shown below so you know what to aim for.")
 
-    # Pull values: 0 if no entry yet so bars render empty
     sm_val  = last_r.get("social_media_time_hrs", 0) if last_r else 0
     sl_val  = last_r.get("sleep_hours", 0)            if last_r else 0
     ex_val  = last_r.get("exercise_days", 0)          if last_r else 0
@@ -1555,7 +1512,6 @@ with TAB_GOALS:
 
     def goal_row(icon, label, current, target, unit, higher_is_better=True, note=""):
         pct  = min(1.0, current / max(target, 0.01))
-        # for social media lower is better — flip logic
         if not higher_is_better:
             done = current <= target and current > 0
         else:
@@ -1578,7 +1534,6 @@ with TAB_GOALS:
 
     st.divider()
 
-    # ── Always-visible weekly goals ───────────────────────────────────────────
     st.markdown("#### 📆 This Week's Goals")
     if not last7_r:
         st.info("Weekly progress fills as you log more entries.")
@@ -1605,7 +1560,6 @@ with TAB_GOALS:
 
     st.divider()
 
-    # ── Data-backed explanations always visible ────────────────────────────────
     st.markdown("#### 📊 Why these targets? *(from our midterm data)*")
     targets = [
         ("📵", "Social media 1–4 hrs/day",
@@ -1635,7 +1589,6 @@ with TAB_AWARDS:
     earned        = check_awards(real_h_awards)
 
     AWARD_DEFS = [
-        # (icon, key, label, description, how_to_unlock)
         ("🌿","detox_starter", "Detox Starter",
          "Took your first break from social media.",
          "Log any day with Detox Days > 0."),
@@ -1686,7 +1639,6 @@ with TAB_AWARDS:
 
     st.divider()
 
-    # Show earned first, then locked
     earned_defs  = [(i,k,l,d,h) for i,k,l,d,h in AWARD_DEFS if k in earned]
     locked_defs  = [(i,k,l,d,h) for i,k,l,d,h in AWARD_DEFS if k not in earned]
 
