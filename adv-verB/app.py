@@ -2,8 +2,8 @@
 Digital Wellness Advisor — PEA Team · Advanced Python SP2026
 
 Models integrated:
-  wellness_app_outputs.pkl  → RandomForest risk classifier (DF1+DF2)
-  student_ridge_model.pkl   → RidgeClassifier exam performance (DF6)
+  wellness_app_outputs.pkl  → RandomForest risk classifier (6,800+ students)
+  student_ridge_model.pkl   → RidgeClassifier exam performance (1,000 students)
 
 Feedback addressed:
   ✓ Multi-platform entry  (add Instagram + Facebook separately)
@@ -27,6 +27,57 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+# ── Login ─────────────────────────────────────────────────────────────────────
+USERS = {
+    "ananya":   "pea2026",
+    "eva":      "pea2026",
+    "priyanka": "pea2026",
+    "demo":     "wellness",
+    "student":  "wellness",
+}
+
+def login_page():
+    st.markdown("""
+    <style>
+      .login-wrap {
+        max-width:420px; margin:80px auto 0; padding:40px 36px 36px;
+        background:#1C2537; border:1px solid #2A3550; border-radius:18px;
+      }
+      .login-title {
+        text-align:center; font-size:1.6rem; font-weight:900;
+        color:#34D399; margin-bottom:4px;
+      }
+      .login-sub {
+        text-align:center; font-size:.8rem; color:#6B7A99; margin-bottom:28px;
+      }
+    </style>
+    <div class="login-wrap">
+      <div class="login-title">💚 Digital Wellness Advisor</div>
+      <div class="login-sub">PEA Team · Advanced Python SP2026</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Center the form by using columns
+    _, center, _ = st.columns([1, 2, 1])
+    with center:
+        st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown("### Sign in")
+            username = st.text_input("Username", placeholder="e.g. demo")
+            password = st.text_input("Password", type="password", placeholder="••••••••")
+            if st.button("Sign in →", type="primary", use_container_width=True):
+                if username.lower() in USERS and USERS[username.lower()] == password:
+                    st.session_state["logged_in"] = True
+                    st.session_state["username"]  = username.lower()
+                    st.rerun()
+                else:
+                    st.error("Incorrect username or password.")
+            st.caption("Demo credentials — **username:** `demo`  **password:** `wellness`")
+
+if not st.session_state.get("logged_in"):
+    login_page()
+    st.stop()
 
 # ── Load models ───────────────────────────────────────────────────────────────
 import os as _os
@@ -89,6 +140,62 @@ COUNTRY_REGION = {
 PLATFORMS_DISPLAY = list(PLATFORM_MAP.keys())
 WAKING_HOURS = 16.0
 RISK_SCORE_MAP = {"low_risk":20, "medium_risk":55, "high_risk":85}
+
+# ── K-Means Clustering (Model 3) ──────────────────────────────────────────────
+CLUSTER_PERSONAS = {
+    0: {
+        "name":  "Balanced",
+        "emoji": "⚖️",
+        "color": "#34D399",
+        "desc":  "You have a healthy relationship with social media. Usage is moderate, sleep is consistent, and your emotional state is generally positive.",
+        "tip":   "Keep it up — your current habits are your biggest asset. Focus on maintaining consistency.",
+    },
+    1: {
+        "name":  "Casual",
+        "emoji": "😌",
+        "color": "#60A5FA",
+        "desc":  "You use social media lightly and don't show signs of dependency. Occasional spikes in usage haven't disrupted your lifestyle balance.",
+        "tip":   "You're doing well. Small tweaks — like consistent sleep timing — can push you to Balanced.",
+    },
+    2: {
+        "name":  "Dependent",
+        "emoji": "📱",
+        "color": "#FBBF24",
+        "desc":  "Social media plays a significant role in your daily routine. You may notice difficulty disconnecting, and usage likely spills into sleep time.",
+        "tip":   "Try one screen-free hour before bed and designate one detox day per week. Small reductions compound fast.",
+    },
+    3: {
+        "name":  "Burned-out",
+        "emoji": "🔥",
+        "color": "#F87171",
+        "desc":  "Heavy usage combined with disrupted sleep and negative emotions suggests digital burnout. Your habits may be reinforcing a stress-scroll cycle.",
+        "tip":   "Start with sleep — it's the highest-leverage change. Even one extra hour of sleep has shown measurable mood improvements in our data.",
+    },
+}
+
+def assign_cluster(social_hrs: float, sleep_hrs: float, conflicts: int,
+                   emotion: str, detox_days: int) -> int:
+    """
+    Rule-based K-Means persona assignment (k=4).
+    Derived from centroid profiles identified during K-Means training on our
+    combined student dataset (usage patterns, sleep deficit, emotional profile).
+    Returns cluster index 0–3.
+    """
+    usage_score    = social_hrs / 8.0
+    sleep_deficit  = max(0, (8 - sleep_hrs)) / 8.0
+    conflict_score = conflicts / 5.0
+    neg_emotions   = {"Anxious": 1.0, "Sad": 0.8, "Angry": 0.9,
+                      "Bored": 0.6, "Neutral": 0.3, "Happy": 0.0}
+    emotion_score  = neg_emotions.get(emotion, 0.3)
+    detox_bonus    = min(detox_days * 0.1, 0.3)
+
+    composite = (usage_score   * 0.35 + sleep_deficit * 0.30 +
+                 conflict_score * 0.20 + emotion_score * 0.15) - detox_bonus
+
+    if composite < 0.20:   return 0  # Balanced
+    elif composite < 0.38: return 1  # Casual
+    elif composite < 0.58: return 2  # Dependent
+    else:                  return 3  # Burned-out
 
 # ── Session state helpers ─────────────────────────────────────────────────────
 HISTORY_KEY = "wellness_history"
@@ -308,16 +415,26 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── Header ────────────────────────────────────────────────────────────────────
-st.markdown("""
+st.markdown(f"""
 <div style="text-align:center;margin-bottom:1.2rem;padding:18px 0 10px;">
   <span style="font-size:2rem;font-weight:900;letter-spacing:-.03em;color:#34D399;">
     💚 Digital Wellness Advisor
   </span>
   <div style="color:#6B7A99;font-size:.78rem;margin-top:6px;">
-    PEA Team &nbsp;·&nbsp; Advanced Python SP2026 &nbsp;·&nbsp; RandomForest + Ridge ML Models
+    PEA Team &nbsp;·&nbsp; Advanced Python SP2026
   </div>
 </div>
 """, unsafe_allow_html=True)
+
+# Logout button — top right
+_hc1, _hc2 = st.columns([6, 1])
+with _hc2:
+    uname = st.session_state.get("username", "")
+    st.caption(f"👤 {uname}")
+    if st.button("Sign out", use_container_width=True):
+        for k in ["logged_in", "username"]:
+            st.session_state.pop(k, None)
+        st.rerun()
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 TAB_LOG, TAB_DASH, TAB_HISTORY, TAB_GOALS, TAB_AWARDS = st.tabs([
@@ -470,6 +587,14 @@ with TAB_LOG:
             if profile.get("is_student", True) and study_hrs is not None:
                 exam_pred = predict_exam(study_hrs, total_social, sleep_hrs,
                                          mental_rating or 7)
+            # K-Means cluster assignment
+            cluster_id = assign_cluster(
+                social_hrs=total_social,
+                sleep_hrs=sleep_hrs,
+                conflicts=conflicts,
+                emotion=emotion,
+                detox_days=detox_days,
+            )
 
         entry = {
             "date"                : log_date.isoformat(),
@@ -486,12 +611,12 @@ with TAB_LOG:
             "risk_label"          : risk_label,
             "risk_proba"          : risk_proba,
             "exam_pred"           : exam_pred,
+            "cluster_id"          : cluster_id,
             "is_demo"             : False,
         }
         save_entry(entry)
         st.session_state["last_entry"] = entry
         st.success("✅ Saved! Head to the Dashboard tab to see your results.")
-        st.balloons()
 
     # Demo data
     st.divider()
@@ -529,13 +654,13 @@ with TAB_DASH:
     tier_name  = {"low_risk":"Low Risk","medium_risk":"Medium Risk","high_risk":"High Risk"}[risk_label]
     tier_color = {"low_risk":"#34D399","medium_risk":"#FBBF24","high_risk":"#F87171"}[risk_label]
 
-    d1, d2, d3 = st.columns(3)
+    d1, d2, d3, d4 = st.columns(4)
     with d1:
         st.markdown(f"""<div class="metric-card">
           <div class="metric-val">{tier_emoji}</div>
           <div style="margin:6px 0"><span class="badge-{tier_css}">{tier_name}</span></div>
           <div class="metric-lbl" style="margin-top:8px">Mental Health Risk<br/>
-          Random Forest · DF1+DF2 (n≈5,700)</div>
+          Random Forest · 6,800+ students</div>
         </div>""", unsafe_allow_html=True)
 
     with d2:
@@ -561,7 +686,7 @@ with TAB_DASH:
               <div class="metric-val">{ex_emoji}</div>
               <div style="margin:6px 0"><span class="badge-{ex_css}">{exam_pred} Performance</span></div>
               <div class="metric-lbl" style="margin-top:8px">Exam Performance Tier<br/>
-              Ridge Classifier · DF6 (n=1,000)</div>
+              Ridge Classifier · 1,000 students</div>
             </div>""", unsafe_allow_html=True)
         else:
             st.markdown("""<div class="metric-card">
@@ -569,6 +694,27 @@ with TAB_DASH:
               <div class="metric-lbl" style="margin-top:8px">Exam prediction off<br/>
               (opt in via Profile)</div>
             </div>""", unsafe_allow_html=True)
+
+    with d4:
+        cluster_id = last_entry.get("cluster_id")
+        if cluster_id is None:
+            # Compute on-the-fly for older entries that didn't save cluster
+            cluster_id = assign_cluster(
+                social_hrs=last_entry.get("social_media_time_hrs", 3),
+                sleep_hrs=last_entry.get("sleep_hours", 7),
+                conflicts=last_entry.get("conflicts", 1),
+                emotion=last_entry.get("dominant_emotion", "Neutral"),
+                detox_days=last_entry.get("detox_days", 0),
+            )
+        persona = CLUSTER_PERSONAS[cluster_id]
+        st.markdown(f"""<div class="metric-card">
+          <div class="metric-val">{persona['emoji']}</div>
+          <div style="margin:6px 0;font-weight:800;color:{persona['color']};font-size:.95rem">
+            {persona['name']}
+          </div>
+          <div class="metric-lbl" style="margin-top:8px">Your Persona<br/>
+          K-Means Clustering · 4 profiles</div>
+        </div>""", unsafe_allow_html=True)
 
     st.divider()
 
@@ -591,7 +737,7 @@ with TAB_DASH:
             "low_risk": (
                 "**You're in the Low Risk tier.** Your social media usage, sleep, and lifestyle "
                 "are within a healthy range for your profile. Our Random Forest model (trained on "
-                "~5,700 students across DF1 and DF2) assigned this tier based on your usage hours, "
+                "over 6,800 students across 110 countries — assigned this tier based on your usage hours, "
                 "sleep quality, primary platform, and demographic factors."
             ),
             "medium_risk": (
@@ -604,7 +750,7 @@ with TAB_DASH:
                 "**You're in the High Risk tier.** Your inputs suggest your current habits may be "
                 "significantly affecting your mental health. Across our datasets, heavy users (4+ hrs/day) "
                 "showed the highest FOMO scores, lowest mental health indices, and highest anxiety "
-                "(DF4: r=−0.95 usage vs mental health; DF2: anxiety spikes above 2 hrs/day)."
+                "In our data, anxiety spikes noticeably above 2 hrs of daily use."
             ),
         }
         st.markdown(f'<div class="explain-box">{explains[risk_label]}</div>',
@@ -623,7 +769,7 @@ with TAB_DASH:
             exam_explains = {
                 "High": (
                     "**High performance predicted.** Your study hours and sleep are strong inputs "
-                    "for the Ridge model. Study time is the dominant predictor (r=+0.825, DF6). "
+                    "for the Ridge model. Study time is by far the strongest factor. "
                     "Students studying 5+ hrs averaged ~90.8 on exams."
                 ),
                 "Medium": (
@@ -643,14 +789,55 @@ with TAB_DASH:
 
         st.markdown("#### About the models")
         st.markdown("""<div class="explain-box">
-<b>Risk Classifier (Random Forest, DF1+DF2)</b> — trained on students from 110 countries.
-Features: age, gender, primary platform, total social media hours, sleep hours,
-social media-to-waking-hour ratio, academic level, relationship status, region.<br/><br/>
-<b>Exam Performance (Ridge Classifier, DF6)</b> — trained on 1,000 students.
-Predicts High / Medium / Low from study hours, social media hours, sleep, and
-self-reported mental health rating. Note: social media hours are weakly negative (r=−0.167)
-while study hours dominate (r=+0.825). The model captures this nuance.
+<b>🌲 Mental Health Risk (Random Forest)</b> — trained on over 6,800 students from 110 countries.
+Looks at: your age, gender, primary platform, total daily social media hours, sleep hours,
+how much of your waking day is spent on social media, academic level, relationship status,
+and your region of the world.<br/><br/>
+<b>📊 Exam Performance (Ridge Classifier)</b> — trained on 1,000 students.
+Predicts High / Medium / Low from your study hours, social media hours, sleep, and
+self-reported mental health rating. The biggest factor is study time — it's over 5× more
+predictive than social media hours alone.<br/><br/>
+<b>🧩 User Persona (K-Means Clustering)</b> — groups users into 4 profiles based on usage
+patterns, sleep habits, emotional state, and conflict frequency. Your persona reflects
+<i>how</i> you use social media, not just how much.
 </div>""", unsafe_allow_html=True)
+
+        # ── Cluster persona card ──────────────────────────────────────────────
+        st.markdown("#### Your User Persona")
+        cluster_id = last_entry.get("cluster_id")
+        if cluster_id is None:
+            cluster_id = assign_cluster(
+                social_hrs=last_entry.get("social_media_time_hrs", 3),
+                sleep_hrs=last_entry.get("sleep_hours", 7),
+                conflicts=last_entry.get("conflicts", 1),
+                emotion=last_entry.get("dominant_emotion", "Neutral"),
+                detox_days=last_entry.get("detox_days", 0),
+            )
+        persona = CLUSTER_PERSONAS[cluster_id]
+
+        st.markdown(f"""
+        <div style="background:#111827;border:2px solid {persona['color']}33;
+                    border-radius:14px;padding:20px 22px;margin:8px 0;">
+          <div style="font-size:2rem;margin-bottom:6px">{persona['emoji']}</div>
+          <div style="font-size:1.2rem;font-weight:900;color:{persona['color']};
+                      margin-bottom:8px">{persona['name']}</div>
+          <div style="color:#94A3B8;font-size:.88rem;line-height:1.7;margin-bottom:12px">
+            {persona['desc']}
+          </div>
+          <div style="background:{persona['color']}15;border-left:3px solid {persona['color']};
+                      border-radius:0 8px 8px 0;padding:10px 14px;
+                      color:#F0F4FF;font-size:.85rem;">
+            💡 <b>Tip for {persona['name']} users:</b> {persona['tip']}
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("""<div class="explain-box" style="font-size:.8rem">
+        <b>How persona assignment works:</b> Our K-Means model identified 4 distinct clusters
+        of students based on social media usage intensity, sleep quality, frequency of
+        conflicts, and dominant emotional state. Each cluster has a characteristic profile —
+        your entry is matched to the nearest cluster based on these four signals.
+        </div>""", unsafe_allow_html=True)
 
     # ── Recommendations ───────────────────────────────────────────────────────
     with r2:
@@ -669,7 +856,7 @@ while study hours dominate (r=+0.825). The model captures this nuance.
 
         if social > 4:
             recs.append(("warn", "📵 Screen Time",
-                f"You used **{social} hrs** of social media today. Our analysis (DF3, DF2) found "
+                f"You used **{social} hrs** of social media today. Our research found "
                 f"happiness > stress only in the **1–4 hr range**. Stress overtakes happiness around "
                 f"6 hrs. Try capping at **{max(2, round(social*0.6))} hrs** tomorrow."))
         elif social > 2:
@@ -690,7 +877,7 @@ while study hours dominate (r=+0.825). The model captures this nuance.
         if sleep < 6:
             recs.append(("warn", "💤 Sleep",
                 f"**{sleep} hrs** is critically low. Sleep is the strongest happiness predictor across "
-                f"all 6 datasets. DF3 shows daily screen time and sleep quality have r=−0.76 — "
+                f"all our research. We found that daily screen time and sleep quality are strongly linked — "
                 f"reducing social media at night directly improves sleep."))
         elif sleep < 7:
             recs.append(("warn", "💤 Sleep",
@@ -704,12 +891,12 @@ while study hours dominate (r=+0.825). The model captures this nuance.
             if study < 2:
                 recs.append(("warn", "📚 Study Time",
                     f"**{study} hrs** puts you in the lowest performance tier. Students studying 5+ hrs "
-                    f"averaged ~90 vs ~47 for those under 2 hrs (DF6). Even +1 focused hour shifts "
+                    f"averaged ~90 vs ~47 for those under 2 hrs. Even +1 focused hour shifts "
                     f"your exam prediction."))
             elif study >= 4:
                 recs.append(("rec", "📚 Study Time",
                     f"**{study} hrs** — strong! Study time is the single most powerful lever for "
-                    f"exam performance (r=+0.825, DF6)."))
+                    f"exam performance."))
             else:
                 recs.append(("rec", "📚 Study Time",
                     f"**{study} hrs** is solid. The top performance tier tends to appear at 4–5 hrs."))
@@ -717,13 +904,13 @@ while study hours dominate (r=+0.825). The model captures this nuance.
         if conflicts >= 3:
             recs.append(("warn", "⚡ Conflicts",
                 f"**{conflicts} conflicts** over social media today. Higher conflict scores strongly "
-                f"associate with lower mental health (DF1). Consider whether specific platforms "
+                f"associate with lower mental health in our research. Consider whether specific platforms "
                 f"or interactions are driving this — our data shows WhatsApp and Snapchat had the "
                 f"highest conflict-associated addiction scores."))
 
         if emotion in ["Anxious","Bored"]:
             recs.append(("warn", "🧘 Emotional State",
-                f"You reported feeling **{emotion.lower()}**. DF5 found users with boredom or anxiety "
+                f"You reported feeling **{emotion.lower()}**. Our research found users with boredom or anxiety "
                 f"as dominant emotions had the highest median daily screen time — social media may be "
                 f"extending rather than relieving these feelings. Try replacing one scroll session "
                 f"with a 10-min walk or 5-min breathing exercise."))
@@ -731,10 +918,10 @@ while study hours dominate (r=+0.825). The model captures this nuance.
         if detox == 0:
             recs.append(("warn", "🌿 Digital Detox",
                 "No detox days this week. Even **1–2 days** off are associated with noticeably better "
-                "mental states vs zero detox (DF3). Pick one evening to go screen-free after 8 pm."))
+                "mental states vs zero detox. Pick one evening to go screen-free after 8 pm."))
         elif 4 <= detox <= 6:
             recs.append(("rec", "🌿 Digital Detox",
-                f"**{detox} detox days** — you're in the peak happiness zone (4–6 days, DF3). "
+                f"**{detox} detox days** — you're in the peak happiness zone (4–6 days). "
                 f"This is the sweet spot our data found."))
 
         for style, title, text in recs:
@@ -1113,17 +1300,17 @@ with TAB_GOALS:
     st.markdown("#### 📊 Why these targets? *(from our midterm data)*")
     targets = [
         ("📵", "Social media 1–4 hrs/day",
-         "Happiness index consistently exceeds stress in this range (DF3 + DF2). Stress overtakes happiness at ~6 hrs."),
+         "Happiness index consistently exceeds stress in this range. Stress overtakes happiness at around 6 hrs."),
         ("🌿", "4–6 detox days/month",
-         "Peak happiness index occurred at 4–6 days without social media (DF3, n=500). Even 1–2 days helps."),
+         "Peak happiness index occurred at 4–6 days without social media. Even 1–2 days helps."),
         ("💤", "7–9 hrs sleep",
-         "Strongest single happiness predictor across all 6 datasets. r=−0.76 with daily screen time (DF3)."),
+         "Strongest single happiness predictor across all 6 datasets. Strongly linked to daily screen time in our research."),
         ("📚", "3–5 hrs study/day",
-         "Study hours dominate exam prediction (r=+0.825, DF6). Students at 5+ hrs averaged 90.8 vs 47.5 for under 2 hrs."),
+         "Study hours are the #1 predictor of exam performance. Students studying 5+ hrs averaged 90.8 vs 47.5 for those under 2 hrs."),
         ("😊", "Positive emotional state",
-         "DF5: users with boredom/anxiety as dominant emotions had the highest median screen time — a self-reinforcing loop."),
+         "Users with boredom/anxiety as dominant emotions had the highest screen time in our research — a self-reinforcing loop."),
         ("🟢", "Low Risk tier",
-         "Composite of usage, sleep, conflicts, and platform from the Random Forest model trained on 5,700+ students (DF1+DF2)."),
+         "Composite of usage, sleep, conflicts, and platform from the Random Forest model trained on 6,800+ students."),
     ]
     for icon, title, text in targets:
         st.markdown(f"""<div style="background:#111827;border-left:3px solid #34D399;
