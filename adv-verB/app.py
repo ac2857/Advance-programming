@@ -448,6 +448,35 @@ with TAB_LOG:
     st.subheader("Log Your Day")
     st.caption("Log today or any past date — all fields feed into the ML models.")
 
+    # ── Scenario injection from test case selector ────────────────────────────
+    _inj = st.session_state.pop("scenario_inject", None)
+    if _inj:
+        # Write injected values into session state keys the widgets will read
+        st.session_state["_sc_platform"]    = _inj["platform"]
+        st.session_state["_sc_social_hrs"]  = float(_inj["social_hrs"])
+        st.session_state["_sc_sleep_hrs"]   = float(_inj["sleep_hrs"])
+        st.session_state["_sc_study_hrs"]   = float(_inj["study_hrs"])
+        st.session_state["_sc_mental"]      = int(_inj["mental_rating"])
+        st.session_state["_sc_conflicts"]   = int(_inj["conflicts"])
+        st.session_state["_sc_emotion"]     = _inj["emotion"]
+        st.session_state["_sc_detox"]       = int(_inj["detox_days"])
+        st.session_state["_sc_exercise"]    = int(_inj["exercise_days"])
+        # Also update profile fields
+        st.session_state[PROFILE_KEY] = dict(
+            name=get_profile().get("name", ""),
+            age=int(_inj["age"]),
+            gender=_inj["gender"],
+            academic=_inj["academic"],
+            rel_status=_inj["rel_status"],
+            country=_inj["country"],
+            is_student=True,
+        )
+        # Reset platform list for this date
+        plat_key_inj = f"plats_{date.today().isoformat()}"
+        st.session_state[plat_key_inj] = [{"platform": _inj["platform"],
+                                            "hours": float(_inj["social_hrs"])}]
+        st.info(f"✅ Scenario loaded into form. Review the values and hit **Save Entry & Analyse**.", icon="⚡")
+
     log_date = st.date_input("Date", value=date.today(), max_value=date.today())
     existing = next((e for e in get_history() if e["date"] == log_date.isoformat()), None)
     if existing:
@@ -534,21 +563,30 @@ with TAB_LOG:
 
     # ── Lifestyle ─────────────────────────────────────────────────────────────
     st.markdown("#### 😴 Lifestyle")
+    # Use injected scenario values if present, fall back to existing entry or defaults
+    _def_sleep    = st.session_state.get("_sc_sleep_hrs",
+                    float(existing["sleep_hours"]) if existing else 7.0)
+    _def_exercise = st.session_state.get("_sc_exercise",
+                    int(existing.get("exercise_days", 3)) if existing else 3)
+    _def_detox    = st.session_state.get("_sc_detox",
+                    int(existing.get("detox_days", 0)) if existing else 0)
+    _def_conflict = st.session_state.get("_sc_conflicts",
+                    int(existing.get("conflicts", 1)) if existing else 1)
+    _def_emotion  = st.session_state.get("_sc_emotion",
+                    existing.get("dominant_emotion", "Neutral") if existing else "Neutral")
+
     lc1, lc2, lc3 = st.columns(3)
     sleep_hrs     = lc1.slider("Sleep Hours", 3.0, 12.0,
-                                value=float(existing["sleep_hours"]) if existing else 7.0, step=0.5)
-    exercise_days = lc2.slider("Exercise (days/week)", 0, 7,
-                                value=int(existing.get("exercise_days",3)) if existing else 3)
-    detox_days    = lc3.slider("Detox Days this week", 0, 7,
-                                value=int(existing.get("detox_days",0)) if existing else 0)
+                                value=float(min(max(_def_sleep, 3.0), 12.0)), step=0.5)
+    exercise_days = lc2.slider("Exercise (days/week)", 0, 7, value=int(_def_exercise))
+    detox_days    = lc3.slider("Detox Days this week", 0, 7, value=int(_def_detox))
 
     lc4, lc5 = st.columns(2)
-    conflicts = lc4.slider("Conflicts over social media (0–5)", 0, 5,
-                            value=int(existing.get("conflicts",1)) if existing else 1)
-    emotion   = lc5.selectbox("Dominant Emotion Today",
-                               ["Happy","Neutral","Anxious","Bored","Sad","Angry"],
-                               index=["Happy","Neutral","Anxious","Bored","Sad","Angry"]
-                                     .index(existing.get("dominant_emotion","Neutral")) if existing else 1)
+    conflicts = lc4.slider("Conflicts over social media (0–5)", 0, 5, value=int(_def_conflict))
+    _emotions = ["Happy","Neutral","Anxious","Bored","Sad","Angry"]
+    emotion   = lc5.selectbox("Dominant Emotion Today", _emotions,
+                               index=_emotions.index(_def_emotion)
+                               if _def_emotion in _emotions else 1)
 
     # ── Academics (optional) ──────────────────────────────────────────────────
     study_hrs     = None
@@ -557,11 +595,15 @@ with TAB_LOG:
         st.divider()
         st.markdown("#### 📚 Academics")
         st.caption("You opted in for exam performance prediction — fill these in.")
+        _def_study  = st.session_state.get("_sc_study_hrs",
+                      float(existing.get("study_hours", 2.0)) if existing else 2.0)
+        _def_mental = st.session_state.get("_sc_mental",
+                      int(existing.get("mental_health_rating", 7)) if existing else 7)
         ac1, ac2 = st.columns(2)
-        study_hrs     = ac1.slider("Study Hours Today", 0.0, 12.0,
-                                    value=float(existing.get("study_hours",2.0)) if existing else 2.0, step=0.5)
+        study_hrs     = ac1.slider("Study Hours Today", 0.0, 15.0,
+                                    value=float(min(max(_def_study, 0.0), 15.0)), step=0.5)
         mental_rating = ac2.slider("Mental Health Rating (1–10)", 1, 10,
-                                    value=int(existing.get("mental_health_rating",7)) if existing else 7)
+                                    value=int(min(max(_def_mental, 1), 10)))
 
     st.divider()
 
@@ -616,14 +658,254 @@ with TAB_LOG:
         }
         save_entry(entry)
         st.session_state["last_entry"] = entry
+        # Clear any injected scenario values
+        for _k in ["_sc_platform","_sc_social_hrs","_sc_sleep_hrs","_sc_study_hrs",
+                   "_sc_mental","_sc_conflicts","_sc_emotion","_sc_detox","_sc_exercise"]:
+            st.session_state.pop(_k, None)
         st.success("✅ Saved! Head to the Dashboard tab to see your results.")
 
-    # Demo data
+    # ── Demo / Test Case Scenarios ────────────────────────────────────────────
     st.divider()
-    with st.expander("🧪 Load example data (so you can explore trend charts)"):
-        st.markdown('<div class="demo-banner">⚠️ Seeds 14 days of synthetic data to demo the trend charts. Does not affect your real entries.</div>',
+    with st.expander("🧪 Try a Test Case — see how each parameter affects risk & performance"):
+
+        st.markdown("""
+        <div class="demo-banner">
+        ⚡ These are real edge-case inputs from our model testing. Pick a scenario below to
+        auto-fill the form — then hit <b>Save Entry & Analyse</b> to see the model output.
+        </div>""", unsafe_allow_html=True)
+
+        # ── Scenario definitions ──────────────────────────────────────────────
+        # Each entry maps directly to form fields
+        SCENARIOS = {
+            # ── RISK MODEL SCENARIOS ──────────────────────────────────────────
+            "🟢 Ideal Student — LinkedIn, great sleep": {
+                "group": "Risk Model",
+                "tag": "Low Risk · 97% confidence",
+                "what_to_watch": "Platform choice (LinkedIn) + 8h sleep → strong Low Risk even at graduate level.",
+                "platform": "LinkedIn", "social_hrs": 2.5, "sleep_hrs": 8.0,
+                "age": 23, "gender": "Male", "academic": "Graduate",
+                "rel_status": "Single", "country": "UK",
+                "study_hrs": 4.0, "mental_rating": 8,
+                "conflicts": 0, "emotion": "Happy", "detox_days": 2, "exercise_days": 4,
+            },
+            "🟢 Max Sleep, Min Screen Time": {
+                "group": "Risk Model",
+                "tag": "Low Risk · 99.8% confidence",
+                "what_to_watch": "Absolute floor on screen time (1.5h) + 9.5h sleep → near-perfect model certainty.",
+                "platform": "Facebook", "social_hrs": 1.5, "sleep_hrs": 9.5,
+                "age": 24, "gender": "Female", "academic": "Graduate",
+                "rel_status": "In Relationship", "country": "Australia",
+                "study_hrs": 5.0, "mental_rating": 9,
+                "conflicts": 0, "emotion": "Happy", "detox_days": 4, "exercise_days": 5,
+            },
+            "🟡 Average Student — Snapchat, mediocre sleep": {
+                "group": "Risk Model",
+                "tag": "Medium Risk · 83% confidence",
+                "what_to_watch": "Snapchat (high addiction platform) + 6.5h sleep tips into Medium Risk despite normal usage.",
+                "platform": "Snapchat", "social_hrs": 4.5, "sleep_hrs": 6.5,
+                "age": 20, "gender": "Male", "academic": "Undergraduate",
+                "rel_status": "Single", "country": "USA",
+                "study_hrs": 2.5, "mental_rating": 6,
+                "conflicts": 2, "emotion": "Neutral", "detox_days": 1, "exercise_days": 2,
+            },
+            "🟡 High SM + Complicated Relationship": {
+                "group": "Risk Model",
+                "tag": "Medium Risk · 95% confidence",
+                "what_to_watch": "Relationship stress amplifies risk — same SM hours with 'Single' status would likely be Low Risk.",
+                "platform": "Instagram", "social_hrs": 6.0, "sleep_hrs": 6.0,
+                "age": 21, "gender": "Male", "academic": "Undergraduate",
+                "rel_status": "Complicated", "country": "India",
+                "study_hrs": 1.5, "mental_rating": 4,
+                "conflicts": 3, "emotion": "Anxious", "detox_days": 0, "exercise_days": 1,
+            },
+            "🟡 Edge: Max SM but Great Sleep": {
+                "group": "Risk Model",
+                "tag": "Medium Risk · 70% confidence — sleep offsets heavy use",
+                "what_to_watch": "8.5h screen time but 9.5h sleep keeps this out of High Risk. Sleep is a real buffer.",
+                "platform": "TikTok", "social_hrs": 8.5, "sleep_hrs": 9.5,
+                "age": 22, "gender": "Male", "academic": "Undergraduate",
+                "rel_status": "In Relationship", "country": "Germany",
+                "study_hrs": 2.0, "mental_rating": 6,
+                "conflicts": 1, "emotion": "Neutral", "detox_days": 1, "exercise_days": 3,
+            },
+            "🟡 Dataset Mean — Typical Profile": {
+                "group": "Risk Model",
+                "tag": "Medium Risk · 89% confidence — the average student",
+                "what_to_watch": "All inputs at dataset averages. The 'typical' student lands squarely in Medium Risk.",
+                "platform": "Instagram", "social_hrs": 4.9, "sleep_hrs": 6.9,
+                "age": 21, "gender": "Female", "academic": "Undergraduate",
+                "rel_status": "Single", "country": "India",
+                "study_hrs": 2.5, "mental_rating": 6,
+                "conflicts": 1, "emotion": "Neutral", "detox_days": 1, "exercise_days": 2,
+            },
+            "🔴 Worst Case — TikTok + Sleep Deprived": {
+                "group": "Risk Model",
+                "tag": "High Risk signals — extreme dual factors",
+                "what_to_watch": "8.5h TikTok + 4h sleep + High School + Complicated = worst-case scenario in our dataset.",
+                "platform": "TikTok", "social_hrs": 8.5, "sleep_hrs": 4.0,
+                "age": 19, "gender": "Female", "academic": "High School",
+                "rel_status": "Complicated", "country": "India",
+                "study_hrs": 0.5, "mental_rating": 2,
+                "conflicts": 5, "emotion": "Anxious", "detox_days": 0, "exercise_days": 0,
+            },
+            "🔴 Teen — Max Instagram + Near-Minimum Sleep": {
+                "group": "Risk Model",
+                "tag": "High Risk signals — age + platform compound",
+                "what_to_watch": "High School age + Complicated status + 8h Instagram amplifies risk beyond just the hours.",
+                "platform": "Instagram", "social_hrs": 8.0, "sleep_hrs": 3.8,
+                "age": 18, "gender": "Male", "academic": "High School",
+                "rel_status": "Complicated", "country": "Japan",
+                "study_hrs": 0.5, "mental_rating": 2,
+                "conflicts": 4, "emotion": "Angry", "detox_days": 0, "exercise_days": 0,
+            },
+            "⚖️ Edge: 4h SM + 4h Sleep — Dual Boundary": {
+                "group": "Risk Model",
+                "tag": "Low Risk · 52% — model is uncertain",
+                "what_to_watch": "Both SM and sleep sit exactly at thresholds. Model confidence drops to 52% — a genuinely ambiguous case.",
+                "platform": "Instagram", "social_hrs": 4.0, "sleep_hrs": 4.0,
+                "age": 21, "gender": "Male", "academic": "Undergraduate",
+                "rel_status": "Single", "country": "Nigeria",
+                "study_hrs": 2.0, "mental_rating": 5,
+                "conflicts": 2, "emotion": "Neutral", "detox_days": 0, "exercise_days": 2,
+            },
+            "⚖️ Rare Platform — KakaoTalk, Average Profile": {
+                "group": "Risk Model",
+                "tag": "Medium Risk · 70% — rare platform encoding",
+                "what_to_watch": "KakaoTalk barely appears in training data. Model still predicts but with lower confidence.",
+                "platform": "KakaoTalk", "social_hrs": 5.0, "sleep_hrs": 7.0,
+                "age": 20, "gender": "Male", "academic": "Undergraduate",
+                "rel_status": "In Relationship", "country": "South Korea",
+                "study_hrs": 2.5, "mental_rating": 6,
+                "conflicts": 1, "emotion": "Neutral", "detox_days": 1, "exercise_days": 2,
+            },
+            # ── EXAM MODEL SCENARIOS ──────────────────────────────────────────
+            "📈 The Overachiever — 10h study, minimal SM": {
+                "group": "Exam Model",
+                "tag": "High exam performance · extreme study hours",
+                "what_to_watch": "10h study + 0.5h SM + 9 mental health = model's clearest High prediction.",
+                "platform": "YouTube", "social_hrs": 0.5, "sleep_hrs": 8.0,
+                "age": 20, "gender": "Female", "academic": "Undergraduate",
+                "rel_status": "Single", "country": "USA",
+                "study_hrs": 10.0, "mental_rating": 9,
+                "conflicts": 0, "emotion": "Happy", "detox_days": 3, "exercise_days": 4,
+            },
+            "📉 The Burnout — 1h study, heavy SM": {
+                "group": "Exam Model",
+                "tag": "Low exam performance · classic burnout profile",
+                "what_to_watch": "1h study + 6h SM + 4h sleep + mental health 2 → model's clearest Low prediction.",
+                "platform": "TikTok", "social_hrs": 6.0, "sleep_hrs": 4.0,
+                "age": 19, "gender": "Male", "academic": "Undergraduate",
+                "rel_status": "Single", "country": "USA",
+                "study_hrs": 1.0, "mental_rating": 2,
+                "conflicts": 3, "emotion": "Anxious", "detox_days": 0, "exercise_days": 0,
+            },
+            "📊 Balanced Student — Moderate everything": {
+                "group": "Exam Model",
+                "tag": "Medium exam performance · well-rounded profile",
+                "what_to_watch": "5h study + 2h SM + 7h sleep is the 'ideal student' template — lands in Medium.",
+                "platform": "Instagram", "social_hrs": 2.0, "sleep_hrs": 7.0,
+                "age": 20, "gender": "Female", "academic": "Undergraduate",
+                "rel_status": "Single", "country": "USA",
+                "study_hrs": 5.0, "mental_rating": 7,
+                "conflicts": 1, "emotion": "Happy", "detox_days": 2, "exercise_days": 3,
+            },
+            "📉 No Study + Extreme SM": {
+                "group": "Exam Model",
+                "tag": "Low performance · zero study hours",
+                "what_to_watch": "0 study hours dominates — 8h SM is secondary. Study time is 5× more predictive than screen time.",
+                "platform": "Instagram", "social_hrs": 8.0, "sleep_hrs": 5.0,
+                "age": 19, "gender": "Male", "academic": "Undergraduate",
+                "rel_status": "Single", "country": "USA",
+                "study_hrs": 0.0, "mental_rating": 3,
+                "conflicts": 2, "emotion": "Bored", "detox_days": 0, "exercise_days": 1,
+            },
+            "📈 High Study, Low Sleep — Borderline": {
+                "group": "Exam Model",
+                "tag": "High/Medium — study hours win despite sleep deprivation",
+                "what_to_watch": "12h study with only 5h sleep. Does extreme effort overcome poor sleep? Watch the prediction.",
+                "platform": "YouTube", "social_hrs": 0.0, "sleep_hrs": 5.0,
+                "age": 21, "gender": "Female", "academic": "Undergraduate",
+                "rel_status": "Single", "country": "USA",
+                "study_hrs": 12.0, "mental_rating": 4,
+                "conflicts": 0, "emotion": "Neutral", "detox_days": 0, "exercise_days": 1,
+            },
+            "📈 Well-Rested + Focused — Best all-round": {
+                "group": "Exam Model",
+                "tag": "High performance · optimal lifestyle",
+                "what_to_watch": "6h study + 9h sleep + mental health 10 — shows sleep quality boosting the exam prediction.",
+                "platform": "LinkedIn", "social_hrs": 1.0, "sleep_hrs": 9.0,
+                "age": 22, "gender": "Male", "academic": "Graduate",
+                "rel_status": "In Relationship", "country": "USA",
+                "study_hrs": 6.0, "mental_rating": 10,
+                "conflicts": 0, "emotion": "Happy", "detox_days": 2, "exercise_days": 5,
+            },
+            "📉 Procrastinator — High SM, barely studies": {
+                "group": "Exam Model",
+                "tag": "Low performance · 10h SM, 0.5h study",
+                "what_to_watch": "Perfect sleep (10h) can't save a 0.5h study day. Confirms study hours dominate the model.",
+                "platform": "TikTok", "social_hrs": 10.0, "sleep_hrs": 10.0,
+                "age": 19, "gender": "Female", "academic": "Undergraduate",
+                "rel_status": "Single", "country": "USA",
+                "study_hrs": 0.5, "mental_rating": 5,
+                "conflicts": 1, "emotion": "Bored", "detox_days": 0, "exercise_days": 2,
+            },
+        }
+
+        # Group scenarios for display
+        risk_scenarios  = {k: v for k, v in SCENARIOS.items() if v["group"] == "Risk Model"}
+        exam_scenarios  = {k: v for k, v in SCENARIOS.items() if v["group"] == "Exam Model"}
+
+        sc_col1, sc_col2 = st.columns(2)
+        with sc_col1:
+            st.markdown("**🌲 Risk Model Test Cases**")
+            st.caption("Shows how platform, sleep, age & relationship status shift the risk tier.")
+            risk_choice = st.radio(
+                "Pick a risk scenario",
+                list(risk_scenarios.keys()),
+                index=None,
+                key="risk_scenario_radio",
+                label_visibility="collapsed",
+            )
+        with sc_col2:
+            st.markdown("**📊 Exam Performance Test Cases**")
+            st.caption("Shows how study hours, sleep & mental health rating drive exam prediction.")
+            exam_choice = st.radio(
+                "Pick an exam scenario",
+                list(exam_scenarios.keys()),
+                index=None,
+                key="exam_scenario_radio",
+                label_visibility="collapsed",
+            )
+
+        chosen_key = risk_choice or exam_choice
+        if chosen_key and chosen_key in SCENARIOS:
+            sc = SCENARIOS[chosen_key]
+            st.markdown("---")
+            sc_a, sc_b = st.columns([3, 2])
+            with sc_a:
+                st.markdown(f"**Selected:** {chosen_key}")
+                st.markdown(f"`{sc['tag']}`")
+                st.info(f"👁️ **What to watch:** {sc['what_to_watch']}")
+            with sc_b:
+                st.markdown("**Inputs that will be loaded:**")
+                st.markdown(
+                    f"- 📱 **{sc['platform']}** · {sc['social_hrs']}h SM\n"
+                    f"- 💤 Sleep: {sc['sleep_hrs']}h\n"
+                    f"- 📚 Study: {sc['study_hrs']}h  ·  🧠 Mental health: {sc['mental_rating']}/10\n"
+                    f"- 👤 {sc['age']}yo {sc['gender']} · {sc['academic']} · {sc['rel_status']}"
+                )
+
+            if st.button("⚡ Load this scenario into the form above", type="primary",
+                         use_container_width=True):
+                # Inject into session state so the form above picks it up on rerun
+                st.session_state["scenario_inject"] = sc
+                st.success("✅ Scenario loaded — scroll up, check the form, then hit **Save Entry & Analyse**.")
+                st.rerun()
+
+        st.divider()
+        st.markdown('<div class="demo-banner">📈 Want trend charts? Also load 14 days of background data:</div>',
                     unsafe_allow_html=True)
-        if st.button("Load 14 days of demo data"):
+        if st.button("Load 14 days of background demo data"):
             seed_example_data()
             st.success("Demo data loaded! Check History & Trends.")
 
