@@ -73,7 +73,7 @@ def login_page():
                     st.rerun()
                 else:
                     st.error("Incorrect username or password.")
-            st.caption("Demo credentials — **username:** `demo`  **password:** `wellness`")
+            
 
 if not st.session_state.get("logged_in"):
     login_page()
@@ -446,7 +446,7 @@ TAB_LOG, TAB_DASH, TAB_HISTORY, TAB_GOALS, TAB_AWARDS = st.tabs([
 # ══════════════════════════════════════════════════════════════════════════════
 with TAB_LOG:
     st.subheader("Log Your Day")
-    st.caption("Log today or any past date — all fields feed into the ML models.")
+    st.caption("Log today or any past date")
 
     # ── Scenario injection — run model & save directly, skip the form ─────────
     _inj = st.session_state.pop("scenario_inject", None)
@@ -529,7 +529,7 @@ with TAB_LOG:
         st.info(f"✏️ Entry exists for {log_date} — editing it below.")
 
     # ── Profile ───────────────────────────────────────────────────────────────
-    with st.expander("👤 Your Profile  *(fill once — saved across entries)*",
+    with st.expander("👤 Your Profile",
                      expanded=not get_profile()):
         pc1, pc2, pc3 = st.columns(3)
         name      = pc1.text_input("Name",   value=get_profile().get("name",""))
@@ -603,7 +603,7 @@ with TAB_LOG:
 
     total_social    = round(sum(r["hours"] for r in platlist), 1)
     primary_platform = max(platlist, key=lambda r: r["hours"])["platform"]
-    st.info(f"**Total social media today: {total_social} hrs** · Primary: {primary_platform}")
+    st.info(f"Total social media today: {total_social} hrs · Primary: {primary_platform}")
 
     st.divider()
 
@@ -1044,19 +1044,19 @@ with TAB_DASH:
         st.markdown("#### What your Mental Health Risk score means")
         explains = {
             "low_risk": (
-                "**You're in the Low Risk tier.** Your social media usage, sleep, and lifestyle "
+                "You're in the Low Risk tier.Your social media usage, sleep, and lifestyle "
                 "are within a healthy range for your profile. Our Random Forest model (trained on "
                 "over 6,800 students across 110 countries — assigned this tier based on your usage hours, "
                 "sleep quality, primary platform, and demographic factors."
             ),
             "medium_risk": (
-                "**You're in the Medium Risk tier.** Some habits are raising flags — typically "
+                "You're in the Medium Risk tier.Some habits are raising flags — typically "
                 "2–4 hrs of social media, sleep near but below 7 hrs, or moderate conflict frequency. "
                 "This is the most actionable tier: small, consistent changes in sleep and screen time "
                 "tend to move people into the Low tier within a week."
             ),
             "high_risk": (
-                "**You're in the High Risk tier.** Your inputs suggest your current habits may be "
+                "You're in the High Risk tier.Your inputs suggest your current habits may be "
                 "significantly affecting your mental health. Across our datasets, heavy users (4+ hrs/day) "
                 "showed the highest FOMO scores, lowest mental health indices, and highest anxiety "
                 "In our data, anxiety spikes noticeably above 2 hrs of daily use."
@@ -1066,7 +1066,7 @@ with TAB_DASH:
                     unsafe_allow_html=True)
 
         if risk_proba:
-            st.markdown("**Model confidence (probability per tier):**")
+            st.markdown("Model confidence (probability per tier):")
             pc1, pc2, pc3 = st.columns(3)
             tier_order = ["low_risk","medium_risk","high_risk"]
             nice_names = {"low_risk":"Low","medium_risk":"Medium","high_risk":"High"}
@@ -1074,20 +1074,20 @@ with TAB_DASH:
                 col.metric(nice_names[k] + " Risk", f"{risk_proba.get(k,0)}%")
 
         if exam_pred:
-            st.markdown("#### What your Exam Performance prediction means")
+            st.markdown("####What your Exam Performance prediction means")
             exam_explains = {
                 "High": (
-                    "**High performance predicted.** Your study hours and sleep are strong inputs "
+                    "High performance predicted.** Your study hours and sleep are strong inputs "
                     "for the Ridge model. Study time is by far the strongest factor. "
                     "Students studying 5+ hrs averaged ~90.8 on exams."
                 ),
                 "Medium": (
-                    "**Medium performance predicted.** There's real room to improve. "
+                    "Medium performance predicted.There's real room to improve. "
                     "The model sees a middling combination of study and lifestyle factors. "
                     "Adding 1 study hour and reducing social media by 30 min can shift this."
                 ),
                 "Low": (
-                    "**Low performance predicted.** The model sees low study hours, high social media, "
+                    "Low performance predicted. The model sees low study hours, high social media, "
                     "or poor sleep. Key fact: students studying under 2 hrs averaged ~47.5 on exams "
                     "vs ~90.8 for those studying 5+ hrs — both groups used ~2.5 hrs/day of social media. "
                     "Study time, not screen time, is the critical differentiator."
