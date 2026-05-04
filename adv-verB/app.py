@@ -448,20 +448,59 @@ with TAB_LOG:
     st.subheader("Log Your Day")
     st.caption("Log today or any past date — all fields feed into the ML models.")
 
-    # ── Scenario injection from test case selector ────────────────────────────
+    # ── Scenario injection — run model & save directly, skip the form ─────────
     _inj = st.session_state.pop("scenario_inject", None)
     if _inj:
-        # Write injected values into session state keys the widgets will read
-        st.session_state["_sc_platform"]    = _inj["platform"]
-        st.session_state["_sc_social_hrs"]  = float(_inj["social_hrs"])
-        st.session_state["_sc_sleep_hrs"]   = float(_inj["sleep_hrs"])
-        st.session_state["_sc_study_hrs"]   = float(_inj["study_hrs"])
-        st.session_state["_sc_mental"]      = int(_inj["mental_rating"])
-        st.session_state["_sc_conflicts"]   = int(_inj["conflicts"])
-        st.session_state["_sc_emotion"]     = _inj["emotion"]
-        st.session_state["_sc_detox"]       = int(_inj["detox_days"])
-        st.session_state["_sc_exercise"]    = int(_inj["exercise_days"])
-        # Also update profile fields
+        _g = _inj["gender"]
+        if _g == "Prefer not to say":
+            _g = "Female"
+        _region = COUNTRY_REGION.get(_inj["country"], "Other")
+        with st.spinner("Running models on scenario…"):
+            _risk_label, _risk_proba = predict_risk(
+                age              = int(_inj["age"]),
+                gender_str       = _g,
+                primary_platform = _inj["platform"],
+                social_hrs       = float(_inj["social_hrs"]),
+                sleep_hrs        = float(_inj["sleep_hrs"]),
+                academic_str     = _inj["academic"],
+                rel_str          = _inj["rel_status"],
+                region_str       = _region,
+            )
+            _exam_pred = predict_exam(
+                float(_inj["study_hrs"]),
+                float(_inj["social_hrs"]),
+                float(_inj["sleep_hrs"]),
+                int(_inj["mental_rating"]),
+            )
+            _cluster_id = assign_cluster(
+                social_hrs = float(_inj["social_hrs"]),
+                sleep_hrs  = float(_inj["sleep_hrs"]),
+                conflicts  = int(_inj["conflicts"]),
+                emotion    = _inj["emotion"],
+                detox_days = int(_inj["detox_days"]),
+            )
+        _sc_entry = {
+            "date"                : date.today().isoformat(),
+            "platforms"           : [{"platform": _inj["platform"],
+                                      "hours": float(_inj["social_hrs"])}],
+            "social_media_time_hrs": float(_inj["social_hrs"]),
+            "primary_platform"    : _inj["platform"],
+            "sleep_hours"         : float(_inj["sleep_hrs"]),
+            "exercise_days"       : int(_inj["exercise_days"]),
+            "detox_days"          : int(_inj["detox_days"]),
+            "conflicts"           : int(_inj["conflicts"]),
+            "dominant_emotion"    : _inj["emotion"],
+            "study_hours"         : float(_inj["study_hrs"]),
+            "mental_health_rating": int(_inj["mental_rating"]),
+            "risk_label"          : _risk_label,
+            "risk_proba"          : _risk_proba,
+            "exam_pred"           : _exam_pred,
+            "cluster_id"          : _cluster_id,
+            "is_demo"             : False,
+        }
+        save_entry(_sc_entry)
+        st.session_state["last_entry"] = _sc_entry
+        # Update profile to match scenario
         st.session_state[PROFILE_KEY] = dict(
             name=get_profile().get("name", ""),
             age=int(_inj["age"]),
@@ -471,11 +510,18 @@ with TAB_LOG:
             country=_inj["country"],
             is_student=True,
         )
-        # Reset platform list for this date
-        plat_key_inj = f"plats_{date.today().isoformat()}"
-        st.session_state[plat_key_inj] = [{"platform": _inj["platform"],
-                                            "hours": float(_inj["social_hrs"])}]
-        st.info(f"✅ Scenario loaded into form. Review the values and hit **Save Entry & Analyse**.", icon="⚡")
+        _tier_name  = {"low_risk":"🟢 Low Risk","medium_risk":"🟡 Medium Risk",
+                       "high_risk":"🔴 High Risk"}[_risk_label]
+        st.success(
+            f"✅ **Scenario saved!** Result → **{_tier_name}** · "
+            f"Exam: **{_exam_pred}** · Persona: **{CLUSTER_PERSONAS[_cluster_id]['name']}** "
+            f"— switch to the **Dashboard** tab to see the full breakdown."
+        )
+        st.info(
+            f"📋 Inputs used: {_inj['platform']} · {_inj['social_hrs']}h SM · "
+            f"{_inj['sleep_hrs']}h sleep · {_inj['study_hrs']}h study · "
+            f"{_inj['age']}yo {_inj['gender']} · {_inj['academic']} · {_inj['rel_status']}"
+        )
 
     log_date = st.date_input("Date", value=date.today(), max_value=date.today())
     existing = next((e for e in get_history() if e["date"] == log_date.isoformat()), None)
@@ -563,30 +609,21 @@ with TAB_LOG:
 
     # ── Lifestyle ─────────────────────────────────────────────────────────────
     st.markdown("#### 😴 Lifestyle")
-    # Use injected scenario values if present, fall back to existing entry or defaults
-    _def_sleep    = st.session_state.get("_sc_sleep_hrs",
-                    float(existing["sleep_hours"]) if existing else 7.0)
-    _def_exercise = st.session_state.get("_sc_exercise",
-                    int(existing.get("exercise_days", 3)) if existing else 3)
-    _def_detox    = st.session_state.get("_sc_detox",
-                    int(existing.get("detox_days", 0)) if existing else 0)
-    _def_conflict = st.session_state.get("_sc_conflicts",
-                    int(existing.get("conflicts", 1)) if existing else 1)
-    _def_emotion  = st.session_state.get("_sc_emotion",
-                    existing.get("dominant_emotion", "Neutral") if existing else "Neutral")
-
     lc1, lc2, lc3 = st.columns(3)
     sleep_hrs     = lc1.slider("Sleep Hours", 3.0, 12.0,
-                                value=float(min(max(_def_sleep, 3.0), 12.0)), step=0.5)
-    exercise_days = lc2.slider("Exercise (days/week)", 0, 7, value=int(_def_exercise))
-    detox_days    = lc3.slider("Detox Days this week", 0, 7, value=int(_def_detox))
+                                value=float(existing["sleep_hours"]) if existing else 7.0, step=0.5)
+    exercise_days = lc2.slider("Exercise (days/week)", 0, 7,
+                                value=int(existing.get("exercise_days", 3)) if existing else 3)
+    detox_days    = lc3.slider("Detox Days this week", 0, 7,
+                                value=int(existing.get("detox_days", 0)) if existing else 0)
 
     lc4, lc5 = st.columns(2)
-    conflicts = lc4.slider("Conflicts over social media (0–5)", 0, 5, value=int(_def_conflict))
+    conflicts = lc4.slider("Conflicts over social media (0–5)", 0, 5,
+                            value=int(existing.get("conflicts", 1)) if existing else 1)
     _emotions = ["Happy","Neutral","Anxious","Bored","Sad","Angry"]
     emotion   = lc5.selectbox("Dominant Emotion Today", _emotions,
-                               index=_emotions.index(_def_emotion)
-                               if _def_emotion in _emotions else 1)
+                               index=_emotions.index(existing.get("dominant_emotion","Neutral"))
+                               if existing else 1)
 
     # ── Academics (optional) ──────────────────────────────────────────────────
     study_hrs     = None
@@ -595,15 +632,11 @@ with TAB_LOG:
         st.divider()
         st.markdown("#### 📚 Academics")
         st.caption("You opted in for exam performance prediction — fill these in.")
-        _def_study  = st.session_state.get("_sc_study_hrs",
-                      float(existing.get("study_hours", 2.0)) if existing else 2.0)
-        _def_mental = st.session_state.get("_sc_mental",
-                      int(existing.get("mental_health_rating", 7)) if existing else 7)
         ac1, ac2 = st.columns(2)
         study_hrs     = ac1.slider("Study Hours Today", 0.0, 15.0,
-                                    value=float(min(max(_def_study, 0.0), 15.0)), step=0.5)
+                                    value=float(existing.get("study_hours", 2.0)) if existing else 2.0, step=0.5)
         mental_rating = ac2.slider("Mental Health Rating (1–10)", 1, 10,
-                                    value=int(min(max(_def_mental, 1), 10)))
+                                    value=int(existing.get("mental_health_rating", 7)) if existing else 7)
 
     st.divider()
 
@@ -658,10 +691,6 @@ with TAB_LOG:
         }
         save_entry(entry)
         st.session_state["last_entry"] = entry
-        # Clear any injected scenario values
-        for _k in ["_sc_platform","_sc_social_hrs","_sc_sleep_hrs","_sc_study_hrs",
-                   "_sc_mental","_sc_conflicts","_sc_emotion","_sc_detox","_sc_exercise"]:
-            st.session_state.pop(_k, None)
         st.success("✅ Saved! Head to the Dashboard tab to see your results.")
 
     # ── Demo / Test Case Scenarios ────────────────────────────────────────────
@@ -895,11 +924,9 @@ with TAB_LOG:
                     f"- 👤 {sc['age']}yo {sc['gender']} · {sc['academic']} · {sc['rel_status']}"
                 )
 
-            if st.button("⚡ Load this scenario into the form above", type="primary",
+            if st.button("⚡ Run this scenario → see results on Dashboard", type="primary",
                          use_container_width=True):
-                # Inject into session state so the form above picks it up on rerun
                 st.session_state["scenario_inject"] = sc
-                st.success("✅ Scenario loaded — scroll up, check the form, then hit **Save Entry & Analyse**.")
                 st.rerun()
 
         st.divider()
